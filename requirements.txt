@@ -4,5 +4,4 @@ flask==3.1.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 requests==2.32.3
-anthropic==0.42.0
 SQLAlchemy==2.0.36

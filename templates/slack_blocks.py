@@ -1,168 +1,199 @@
 """
 Slack Block Kit message templates for INFLUENCE Bot.
-These build rich, interactive messages for the Slack workspace.
+Rich notifications for milestones, deliverables, deadlines, uploads,
+payment summaries, and webhook events (review/video links).
 """
 
-import json
 
-
-def build_video_review_blocks(
-    creator_name: str,
-    creator_handle: str,
+def build_milestone_blocks(
+    creator_username: str,
+    campaign_name: str,
     brand_name: str,
-    video_url: str,
-    video_id: int,
-    campaign_id: int,
+    milestone_label: str,
+    current_views: str,
 ) -> list[dict]:
-    """Build the video review message with Approve / Request Changes buttons."""
+    """Notification when a creator crosses a view milestone."""
     return [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": ":film_frames: New Video Ready for Review",
+                "text": ":trophy: View Milestone Reached!",
             },
         },
         {
             "type": "section",
             "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Creator:*\n{creator_name} (@{creator_handle})",
-                },
+                {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+                {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name}"},
                 {"type": "mrkdwn", "text": f"*Brand:*\n{brand_name}"},
+                {"type": "mrkdwn", "text": f"*Milestone:*\n{milestone_label} views"},
             ],
         },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f":link: *Video Link:* <{video_url}|Click to watch the video>",
+                "text": f":chart_with_upwards_trend: Current total views: *{current_views}*",
             },
         },
         {"type": "divider"},
+    ]
+
+
+def build_deliverable_complete_blocks(
+    creator_username: str,
+    campaign_name: str,
+    brand_name: str,
+) -> list[dict]:
+    """Notification when all deliverables are complete — flag for payment."""
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":white_check_mark: Deliverables Complete!",
+            },
+        },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "Please review the video and take action below:",
+                "text": (
+                    f"*@{creator_username}* has completed all deliverables "
+                    f"for *{campaign_name}* ({brand_name}).\n\n"
+                    f":moneybag: *This creator is ready to be paid.*"
+                ),
+            },
+        },
+        {"type": "divider"},
+    ]
+
+
+def build_deadline_reminder_blocks(
+    creator_username: str,
+    campaign_name: str,
+    brand_name: str,
+    deadline: str,
+    reminder_type: str,
+    days_left: int,
+) -> list[dict]:
+    """Deadline reminder — 3 days, 1 day, or overdue."""
+    if reminder_type == "overdue":
+        emoji = ":red_circle:"
+        title = "Deadline Overdue!"
+        status_text = f"The deadline was *{deadline}* — now *{abs(days_left)} day(s) overdue*."
+    elif reminder_type == "1_day":
+        emoji = ":warning:"
+        title = "Deadline Tomorrow!"
+        status_text = f"The deadline is *{deadline}* — *1 day remaining*."
+    else:
+        emoji = ":calendar:"
+        title = "Deadline Approaching"
+        status_text = f"The deadline is *{deadline}* — *{days_left} days remaining*."
+
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"{emoji} {title}",
             },
         },
         {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Approve Video"},
-                    "style": "primary",
-                    "action_id": "approve_video",
-                    "value": json.dumps(
-                        {"video_id": video_id, "campaign_id": campaign_id}
-                    ),
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Request Changes"},
-                    "style": "danger",
-                    "action_id": "request_changes",
-                    "value": json.dumps(
-                        {"video_id": video_id, "campaign_id": campaign_id}
-                    ),
-                },
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+                {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name}"},
+                {"type": "mrkdwn", "text": f"*Brand:*\n{brand_name}"},
+                {"type": "mrkdwn", "text": f"*Deadline:*\n{deadline}"},
             ],
         },
-    ]
-
-
-def build_approval_notification_blocks(
-    creator_name: str, brand_name: str, approver_user_id: str
-) -> list[dict]:
-    """Notification block for when a video is approved."""
-    return [
         {
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f":white_check_mark: *Video Approved!*\n\n"
-                    f"*Creator:* {creator_name}\n"
-                    f"*Brand:* {brand_name}\n"
-                    f"*Approved by:* <@{approver_user_id}>\n\n"
-                    f"Approval email has been sent to the creator. "
-                    f"They are clear to post!"
-                ),
-            },
+            "text": {"type": "mrkdwn", "text": status_text},
         },
+        {"type": "divider"},
     ]
 
 
-def build_changes_requested_blocks(
-    creator_name: str,
+def build_upload_followup_blocks(
+    creator_username: str,
+    campaign_name: str,
     brand_name: str,
-    reviewer_user_id: str,
-    feedback: str,
+    videos_posted: int,
+    videos_required: int,
+    deadline: str,
+    days_left: int,
 ) -> list[dict]:
-    """Notification block for when changes are requested on a video."""
+    """Reminder when a creator is behind on uploads near the deadline."""
     return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":film_frames: Upload Reminder",
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+                {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name}"},
+                {"type": "mrkdwn", "text": f"*Brand:*\n{brand_name}"},
+                {"type": "mrkdwn", "text": f"*Deadline:*\n{deadline}"},
+            ],
+        },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f":pencil2: *Changes Requested*\n\n"
-                    f"*Creator:* {creator_name}\n"
-                    f"*Brand:* {brand_name}\n"
-                    f"*Requested by:* <@{reviewer_user_id}>\n"
-                    f"*Feedback:* {feedback}\n\n"
-                    f"Feedback email has been sent to the creator."
+                    f"@{creator_username} has posted *{videos_posted}/{videos_required}* "
+                    f"videos with *{days_left} day(s)* remaining until the deadline."
                 ),
             },
         },
+        {"type": "divider"},
     ]
 
 
-def build_campaign_status_blocks(campaigns: list[dict]) -> list[dict]:
-    """Build a campaign status overview for slash commands."""
+def build_payment_summary_blocks(completed_creators: list[dict]) -> list[dict]:
+    """Daily payment summary of all creators with completed deliverables."""
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": ":bar_chart: Campaign Status"},
+            "text": {
+                "type": "plain_text",
+                "text": ":sunrise: Daily Payment Summary",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{len(completed_creators)} creator(s)* have completed "
+                    f"deliverables and are ready for payment:"
+                ),
+            },
         },
         {"type": "divider"},
     ]
 
-    status_emojis = {
-        "pending": ":large_blue_circle:",
-        "video_submitted": ":film_frames:",
-        "under_review": ":large_yellow_circle:",
-        "approved": ":white_check_mark:",
-        "changes_requested": ":pencil2:",
-        "posted": ":tada:",
-        "overdue": ":red_circle:",
-    }
-
-    for c in campaigns:
-        emoji = status_emojis.get(c["status"], ":grey_question:")
+    for creator in completed_creators:
+        username = creator.get("username", "Unknown")
+        campaign_name = creator.get("campaign_name", "")
+        brand_name = creator.get("brand_name", "")
         blocks.append(
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"{emoji} *{c['creator_name']}* x *{c['brand_name']}*\n"
-                        f"Deadline: {c['deadline']} | Status: `{c['status']}`"
+                        f":moneybag: *@{username}* — "
+                        f"{campaign_name} ({brand_name})"
                     ),
-                },
-            }
-        )
-
-    if not campaigns:
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "No active campaigns found.",
                 },
             }
         )
@@ -170,46 +201,77 @@ def build_campaign_status_blocks(campaigns: list[dict]) -> list[dict]:
     return blocks
 
 
-def build_creator_stats_blocks(stats: dict) -> list[dict]:
-    """Build a creator's Instagram stats summary."""
-    if "error" in stats:
-        return [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f":x: Could not fetch stats: {stats['error']}",
-                },
-            }
-        ]
+def build_review_submitted_blocks(
+    creator_username: str,
+    campaign_name: str,
+    brand_name: str,
+    video_link: str,
+    notes: str,
+) -> list[dict]:
+    """Webhook event: creator submitted a video for review."""
+    text_parts = [
+        f"*@{creator_username}* submitted a video for review "
+        f"on *{campaign_name}* ({brand_name})."
+    ]
+    if video_link:
+        text_parts.append(f":link: <{video_link}|Watch Video>")
+    if notes:
+        text_parts.append(f":memo: *Notes:* {notes}")
 
     return [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f":chart_with_upwards_trend: Stats for @{stats['username']}",
+                "text": ":film_frames: Video Submitted for Review",
             },
         },
         {
             "type": "section",
-            "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Followers:*\n{stats['followers']:,}",
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Total Posts:*\n{stats['total_posts']:,}",
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Avg Likes (recent):*\n{stats['recent_avg_likes']:,}",
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Avg Comments (recent):*\n{stats['recent_avg_comments']:,}",
-                },
-            ],
+            "text": {
+                "type": "mrkdwn",
+                "text": "\n".join(text_parts),
+            },
         },
+        {"type": "divider"},
+    ]
+
+
+def build_video_links_submitted_blocks(
+    creator_username: str,
+    campaign_name: str,
+    brand_name: str,
+    video_title: str,
+    links: list[dict],
+) -> list[dict]:
+    """Webhook event: creator submitted video links (posted content)."""
+    link_lines = []
+    for link in links:
+        link_lines.append(f"• *{link['platform']}:* <{link['url']}|View>")
+
+    body = (
+        f"*@{creator_username}* submitted video links "
+        f"for *{campaign_name}* ({brand_name})."
+    )
+    if video_title:
+        body += f"\n:clapper: *Title:* {video_title}"
+    if link_lines:
+        body += "\n\n" + "\n".join(link_lines)
+
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":link: Video Links Submitted",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": body,
+            },
+        },
+        {"type": "divider"},
     ]

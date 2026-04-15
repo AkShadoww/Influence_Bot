@@ -2,88 +2,60 @@
 Slack slash command handlers for INFLUENCE Bot.
 
 Commands:
-  /influence-status   — View active campaign statuses
-  /influence-followup — Manually trigger overdue campaign checks
-  /influence-stats    — Check a creator's Instagram stats
-  /influence-help     — Show all available commands
+  /influence-status  — View active campaign statuses from the ReelStats API
+  /influence-check   — Manually trigger all notification checks
+  /influence-help    — Show all available commands
 """
 
 import logging
 
-from models.models import SessionLocal, Campaign
-from templates.slack_blocks import build_campaign_status_blocks, build_creator_stats_blocks
-
 logger = logging.getLogger(__name__)
 
 
-def register_commands(app, scheduler_service, instagram_service):
+def register_commands(app, scheduler_service, reelstats_api):
     """Register all slash commands on the Bolt app."""
 
     @app.command("/influence-status")
     def handle_status(ack, respond):
-        """Show the status of all active campaigns."""
-        ack()
-        db = SessionLocal()
-        try:
-            campaigns = (
-                db.query(Campaign)
-                .filter(Campaign.status != "posted")
-                .order_by(Campaign.deadline.asc())
-                .all()
-            )
-
-            campaign_data = []
-            for c in campaigns:
-                campaign_data.append(
-                    {
-                        "creator_name": c.creator.name,
-                        "brand_name": c.brand.name,
-                        "deadline": c.deadline.strftime("%b %d, %Y"),
-                        "status": c.status,
-                    }
-                )
-
-            blocks = build_campaign_status_blocks(campaign_data)
-            respond(blocks=blocks, response_type="ephemeral")
-        finally:
-            db.close()
-
-    @app.command("/influence-followup")
-    def handle_followup(ack, respond):
-        """Manually trigger the overdue campaign check."""
+        """Show the status of active campaigns from the ReelStats API."""
         ack()
         respond(
-            text=":mag: Checking for overdue campaigns now...",
-            response_type="ephemeral",
-        )
-        scheduler_service.check_overdue_campaigns()
-        respond(
-            text=":white_check_mark: Overdue campaign check complete. "
-            "Any follow-up emails have been sent.",
+            text=":hourglass_flowing_sand: Fetching campaigns from ReelStats...",
             response_type="ephemeral",
         )
 
-    @app.command("/influence-stats")
-    def handle_stats(ack, respond, command):
-        """Check a creator's Instagram stats."""
-        ack()
-        handle_text = (command.get("text") or "").strip().lstrip("@")
-
-        if not handle_text:
+        campaigns = reelstats_api.get_campaigns()
+        if not campaigns:
             respond(
-                text="Please provide an Instagram handle: `/influence-stats username`",
+                text=":information_source: No active campaigns found.",
                 response_type="ephemeral",
             )
             return
 
+        lines = [":bar_chart: *Active Campaigns*\n"]
+        for campaign in campaigns:
+            name = campaign.get("name", "Unknown")
+            brand = campaign.get("brandName", "")
+            creator_count = len(campaign.get("creators", []))
+            lines.append(
+                f"• *{name}* ({brand}) — {creator_count} creator(s)"
+            )
+
+        respond(text="\n".join(lines), response_type="ephemeral")
+
+    @app.command("/influence-check")
+    def handle_check(ack, respond):
+        """Manually trigger all notification checks."""
+        ack()
         respond(
-            text=f":hourglass_flowing_sand: Fetching stats for @{handle_text}...",
+            text=":mag: Running all checks now (milestones, deliverables, deadlines, uploads)...",
             response_type="ephemeral",
         )
-
-        stats = instagram_service.check_creator_stats(handle_text)
-        blocks = build_creator_stats_blocks(stats)
-        respond(blocks=blocks, response_type="ephemeral")
+        scheduler_service.run_all_checks()
+        respond(
+            text=":white_check_mark: All checks complete. Notifications sent for any new items.",
+            response_type="ephemeral",
+        )
 
     @app.command("/influence-help")
     def handle_help(ack, respond):
@@ -92,15 +64,16 @@ def register_commands(app, scheduler_service, instagram_service):
         respond(
             text=(
                 ":robot_face: *INFLUENCE Bot Commands*\n\n"
-                "`/influence-status` — View all active campaign statuses\n"
-                "`/influence-followup` — Manually check for overdue campaigns and send follow-ups\n"
-                "`/influence-stats <handle>` — Check a creator's Instagram stats\n"
+                "`/influence-status` — View active campaigns from the ReelStats API\n"
+                "`/influence-check` — Manually run all notification checks\n"
                 "`/influence-help` — Show this help message\n\n"
                 "*Automatic Features:*\n"
-                "- Videos submitted via Tally are automatically sent to brand channels for review\n"
-                "- Overdue posting deadlines trigger automatic follow-up emails\n"
-                "- Brand approvals/feedback are emailed to creators automatically\n"
-                "- Daily campaign summaries are posted every morning at 9 AM"
+                "- :trophy: View milestone alerts (250K, 500K, 1M, ...)\n"
+                "- :white_check_mark: Payment flags when deliverables are complete\n"
+                "- :calendar: Deadline reminders (3 days, 1 day, overdue) via Slack + email\n"
+                "- :film_frames: Upload follow-ups when creators are behind schedule\n"
+                "- :sunrise: Daily payment summary at 9 AM\n"
+                "- :link: Real-time webhook notifications for reviews and video links"
             ),
             response_type="ephemeral",
         )

@@ -2,16 +2,16 @@
 INFLUENCE Bot — Main Application Entry Point
 
 An automated Slack bot for INFLUENCE (influencer marketing) that:
-- Receives video submissions via Tally webhooks
-- Sends videos to brand POCs on Slack for review/approval
-- Sends automated follow-up emails for overdue creator posts
-- Notifies the team with daily summaries and real-time alerts
-- Tracks creator Instagram stats
+- Polls the ReelStats API every 5 minutes for campaign data
+- Sends view milestone alerts (250K, 500K, 1M, ...)
+- Flags creators for payment when deliverables are complete
+- Sends deadline reminders (3 days, 1 day, overdue) via Slack + email
+- Sends upload follow-ups when creators are behind schedule
+- Posts a daily payment summary at 9 AM
+- Receives webhook events from ReelStats (review_submitted, video_links_submitted)
 
 Email: jennifer@useinfluence.xyz
-Tally: https://tally.so/dashboard
-Slack Workspace: T09DSH6AEQH
-Campaign Site: https://campaigns.influence.technology/reve/reve-features
+ReelStats API: configured via REELSTATS_API_URL env var
 """
 
 import logging
@@ -24,11 +24,9 @@ from config import Config
 from models.models import init_db
 from bot.handlers import register_event_handlers
 from bot.commands import register_commands
-from bot.actions import register_actions
 from services.email_service import EmailService
-from services.tally_service import TallyService
-from services.instagram_service import InstagramService
-from services.approval_workflow import ApprovalWorkflow
+from services.reelstats_api import ReelStatsAPI
+from services.webhook_handler import WebhookHandler
 from services.scheduler_service import SchedulerService
 
 # ---------------------------------------------------------------------------
@@ -57,17 +55,15 @@ bolt_app = App(
 # Services
 # ---------------------------------------------------------------------------
 email_service = EmailService()
-tally_service = TallyService()
-instagram_service = InstagramService()
-approval_workflow = ApprovalWorkflow(bolt_app.client, email_service)
-scheduler_service = SchedulerService(bolt_app.client, email_service)
+reelstats_api = ReelStatsAPI()
+webhook_handler = WebhookHandler(bolt_app.client)
+scheduler_service = SchedulerService(bolt_app.client, email_service, reelstats_api)
 
 # ---------------------------------------------------------------------------
 # Register Slack Handlers
 # ---------------------------------------------------------------------------
-register_event_handlers(bolt_app, approval_workflow, scheduler_service)
-register_commands(bolt_app, scheduler_service, instagram_service)
-register_actions(bolt_app, approval_workflow)
+register_event_handlers(bolt_app)
+register_commands(bolt_app, scheduler_service, reelstats_api)
 
 # ---------------------------------------------------------------------------
 # Flask App  (wraps Bolt for HTTP endpoints)
@@ -95,66 +91,27 @@ def slack_actions():
 
 
 # ---------------------------------------------------------------------------
-# Tally Webhook Endpoint
+# ReelStats Webhook Endpoint
 # ---------------------------------------------------------------------------
-@flask_app.route("/webhooks/tally", methods=["POST"])
-def tally_webhook():
+@flask_app.route("/webhook", methods=["POST"])
+def reelstats_webhook():
     """
-    Receive webhooks from Tally form submissions.
-    Processes creator info, video uploads, and posting status updates.
-    Configure this URL in Tally: https://tally.so/dashboard -> Form -> Integrations -> Webhooks
+    Receive webhook events from the ReelStats server.
+    Events: review_submitted, video_links_submitted
     """
     payload = request.get_json()
     if not payload:
         return jsonify({"error": "No payload"}), 400
 
-    result = tally_service.process_webhook(payload)
-    action = result.get("action")
+    event_type = payload.get("event", "unknown")
+    logger.info(f"Received webhook event: {event_type}")
 
-    if action == "video_review":
-        # A creator submitted a video — send it to the brand for review
-        approval_workflow.send_video_for_review(result)
-        logger.info(f"Video review workflow triggered for campaign {result.get('campaign_id')}")
+    success = webhook_handler.handle_event(payload)
 
-    elif action == "new_campaign":
-        # A new campaign was set up — notify the team
-        bolt_app.client.chat_postMessage(
-            channel=Config.SLACK_TEAM_CHANNEL_ID,
-            text=(
-                f":sparkles: *New Campaign Created!*\n"
-                f"Creator: {result['creator_name']}\n"
-                f"Brand: {result['brand_name']}\n"
-                f"Deadline: {result['deadline']}\n"
-                f"Content Type: {result['post_type'].capitalize()}"
-            ),
-        )
-        logger.info(f"New campaign created: {result['creator_name']} x {result['brand_name']}")
-
-    elif action == "posting_status":
-        # Creator reported posting status
-        if result["posted"]:
-            bolt_app.client.chat_postMessage(
-                channel=Config.SLACK_TEAM_CHANNEL_ID,
-                text=(
-                    f":tada: *Creator Posted!*\n"
-                    f"{result['creator_name']} has posted their content for "
-                    f"{result['brand_name']}!"
-                ),
-            )
-        else:
-            bolt_app.client.chat_postMessage(
-                channel=Config.SLACK_ALERTS_CHANNEL_ID or Config.SLACK_TEAM_CHANNEL_ID,
-                text=(
-                    f":warning: *Creator Has Not Posted*\n"
-                    f"{result['creator_name']} reported they have NOT posted yet for "
-                    f"{result['brand_name']}. Follow-up will be triggered."
-                ),
-            )
-
-    elif action == "error":
-        logger.warning(f"Tally webhook error: {result.get('message')}")
-
-    return jsonify({"status": "ok"}), 200
+    if success:
+        return jsonify({"status": "ok"}), 200
+    else:
+        return jsonify({"status": "unhandled", "event": event_type}), 200
 
 
 # ---------------------------------------------------------------------------
@@ -170,9 +127,10 @@ def health():
 # ---------------------------------------------------------------------------
 def main():
     logger.info("Starting INFLUENCE Bot...")
-    logger.info(f"Campaign Website: {Config.CAMPAIGN_WEBSITE_URL}")
+    logger.info(f"ReelStats API: {Config.REELSTATS_API_URL}")
+    logger.info(f"Poll interval: {Config.POLL_INTERVAL_MINUTES} minutes")
 
-    # Start the deadline monitoring scheduler
+    # Start the polling scheduler
     scheduler_service.start()
 
     try:

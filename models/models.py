@@ -1,3 +1,10 @@
+"""
+Database models for INFLUENCE Bot.
+Tracks state to avoid duplicate notifications (milestones, alerts, reminders).
+The ReelStats API is the source of truth for campaign data — these models
+only persist notification state that the API doesn't track.
+"""
+
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -6,11 +13,10 @@ from sqlalchemy import (
     String,
     DateTime,
     Boolean,
-    Text,
-    ForeignKey,
+    UniqueConstraint,
     create_engine,
 )
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import Config
 
@@ -23,82 +29,72 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
 
-class Brand(Base):
-    __tablename__ = "brands"
+class MilestoneAlert(Base):
+    """Tracks which view milestones have been notified to avoid duplicates."""
+    __tablename__ = "milestone_alerts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False)
-    poc_name = Column(String(255))
-    poc_email = Column(String(255))
-    slack_channel_id = Column(String(50))
-    slack_user_id = Column(String(50))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+    milestone_value = Column(Integer, nullable=False)  # e.g. 250000, 500000
+    notified_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    campaigns = relationship("Campaign", back_populates="brand")
-
-    def __repr__(self):
-        return f"<Brand {self.name}>"
-
-
-class Creator(Base):
-    __tablename__ = "creators"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False)
-    email = Column(String(255), nullable=False)
-    instagram_handle = Column(String(255))
-    instagram_id = Column(String(100))
-    phone = Column(String(50))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    campaigns = relationship("Campaign", back_populates="creator")
-
-    def __repr__(self):
-        return f"<Creator {self.name} (@{self.instagram_handle})>"
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "creator_username", "milestone_value",
+            name="uq_milestone_alert",
+        ),
+    )
 
 
-class Campaign(Base):
-    __tablename__ = "campaigns"
+class DeliverableAlert(Base):
+    """Tracks which deliverable-complete alerts have been sent."""
+    __tablename__ = "deliverable_alerts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    creator_id = Column(Integer, ForeignKey("creators.id"), nullable=False)
-    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=False)
-    deadline = Column(DateTime, nullable=False)
-    post_type = Column(String(50), default="reel")  # reel, story, post
-    status = Column(String(50), default="pending")
-    # pending, video_submitted, under_review, approved, changes_requested,
-    # posted, overdue
-    has_posted = Column(Boolean, default=False)
-    followup_count = Column(Integer, default=0)
-    last_followup_at = Column(DateTime)
-    notes = Column(Text)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, onupdate=lambda: datetime.now(timezone.utc))
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+    notified_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    creator = relationship("Creator", back_populates="campaigns")
-    brand = relationship("Brand", back_populates="campaigns")
-    video_submissions = relationship("VideoSubmission", back_populates="campaign")
-
-    def __repr__(self):
-        return f"<Campaign {self.creator.name} x {self.brand.name}>"
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "creator_username",
+            name="uq_deliverable_alert",
+        ),
+    )
 
 
-class VideoSubmission(Base):
-    __tablename__ = "video_submissions"
+class DeadlineReminder(Base):
+    """Tracks which deadline reminders have been sent (3 days, 1 day, overdue)."""
+    __tablename__ = "deadline_reminders"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
-    video_url = Column(Text, nullable=False)
-    tally_submission_id = Column(String(255))
-    review_status = Column(String(50), default="pending")
-    # pending, sent_to_brand, approved, changes_requested
-    reviewer_notes = Column(Text)
-    slack_message_ts = Column(String(50))
-    slack_channel_id = Column(String(50))
-    submitted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    reviewed_at = Column(DateTime)
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+    reminder_type = Column(String(50), nullable=False)  # "3_days", "1_day", "overdue"
+    notified_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    email_sent = Column(Boolean, default=False)
 
-    campaign = relationship("Campaign", back_populates="video_submissions")
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "creator_username", "reminder_type",
+            name="uq_deadline_reminder",
+        ),
+    )
 
-    def __repr__(self):
-        return f"<VideoSubmission campaign={self.campaign_id} status={self.review_status}>"
+
+class UploadFollowup(Base):
+    """Tracks upload follow-up reminders sent within the 5-day window."""
+    __tablename__ = "upload_followups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+    notified_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "creator_username",
+            name="uq_upload_followup",
+        ),
+    )

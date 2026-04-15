@@ -4,52 +4,20 @@ All emails are sent from jennifer@useinfluence.xyz.
 """
 
 
-def followup_delayed_post(creator_name: str, brand_name: str, deadline: str) -> dict:
-    """Email template when a creator has missed their posting deadline."""
-    subject = f"Quick Check-In: {brand_name} Content Deadline"
-    body = f"""Hi {creator_name},
+def deadline_reminder_email(
+    creator_name: str,
+    campaign_name: str,
+    brand_name: str,
+    deadline: str,
+    reminder_type: str,
+    days_left: int,
+) -> dict:
+    """Email template for deadline reminders (3 days, 1 day, overdue)."""
+    if reminder_type == "overdue":
+        subject = f"Urgent: {brand_name} Content — Deadline Passed"
+        body = f"""Hi {creator_name},
 
-Hope you're doing great! Just wanted to quickly check in regarding your content for {brand_name}.
-
-We noticed that the posting deadline ({deadline}) has passed, and we haven't seen the content go live yet. We totally understand that things can get busy, so no worries at all — just wanted to make sure everything is on track!
-
-Could you give us a quick update on where things stand? If there's anything holding things up or if you need any support from our end, we're here to help.
-
-Looking forward to hearing from you!
-
-Warm regards,
-Jennifer
-INFLUENCE Team
-"""
-    return {"subject": subject, "body": body}
-
-
-def followup_second_reminder(creator_name: str, brand_name: str, deadline: str) -> dict:
-    """Second follow-up email for delayed posting."""
-    subject = f"Following Up: {brand_name} Content — Need Your Update"
-    body = f"""Hi {creator_name},
-
-Hope all is well! I'm following up on my previous email regarding the {brand_name} content that was due on {deadline}.
-
-We'd love to get this wrapped up as the brand is eager to see the content go live. Could you please share an update at your earliest convenience?
-
-If there are any challenges or if the timeline needs to be adjusted, just let us know — we're happy to work with you on it.
-
-Thanks so much for your time!
-
-Best,
-Jennifer
-INFLUENCE Team
-"""
-    return {"subject": subject, "body": body}
-
-
-def followup_urgent_reminder(creator_name: str, brand_name: str, deadline: str) -> dict:
-    """Urgent third follow-up for significantly delayed posting."""
-    subject = f"Urgent: {brand_name} Content — Action Required"
-    body = f"""Hi {creator_name},
-
-I hope you're doing well. I wanted to reach out once more regarding the {brand_name} content that was originally due on {deadline}.
+I hope you're doing well. I wanted to reach out regarding the {brand_name} campaign ("{campaign_name}") — the content deadline ({deadline}) has passed.
 
 This is becoming quite time-sensitive, and the brand has been checking in with us for updates. We really want to make sure everything goes smoothly for both you and the brand.
 
@@ -61,12 +29,40 @@ Best regards,
 Jennifer
 INFLUENCE Team
 """
+    elif reminder_type == "1_day":
+        subject = f"Reminder: {brand_name} Content Due Tomorrow"
+        body = f"""Hi {creator_name},
+
+Just a quick heads-up — the deadline for your {brand_name} campaign ("{campaign_name}") content is tomorrow ({deadline}).
+
+Please make sure your content is posted on time. If there's anything holding things up or if you need any support from our end, let us know and we're happy to help!
+
+Looking forward to seeing the content go live.
+
+Best,
+Jennifer
+INFLUENCE Team
+"""
+    else:
+        subject = f"Upcoming Deadline: {brand_name} Content Due in {days_left} Days"
+        body = f"""Hi {creator_name},
+
+Hope you're doing great! Just a friendly reminder that the deadline for your {brand_name} campaign ("{campaign_name}") content is coming up on {deadline} — that's {days_left} days from now.
+
+If you haven't already, please make sure everything is on track for posting by the deadline. If you have any questions about the brief or deliverables, don't hesitate to reach out.
+
+Thanks for being such a great partner on this!
+
+Warm regards,
+Jennifer
+INFLUENCE Team
+"""
     return {"subject": subject, "body": body}
 
 
 def video_approved(creator_name: str, brand_name: str) -> dict:
     """Email to creator when their video has been approved by the brand."""
-    subject = f"Great News! Your {brand_name} Video Has Been Approved 🎉"
+    subject = f"Great News! Your {brand_name} Video Has Been Approved"
     body = f"""Hi {creator_name},
 
 Amazing news — the {brand_name} team has reviewed and approved your video! Everything looks fantastic, and they're really happy with the content.
@@ -104,52 +100,6 @@ If you have any questions about the feedback, feel free to reach out — happy t
 Thanks for being such a great partner on this.
 
 Warm regards,
-Jennifer
-INFLUENCE Team
-"""
-    return {"subject": subject, "body": body}
-
-
-def video_submitted_for_review_brand(
-    brand_poc_name: str, creator_name: str, creator_handle: str, video_url: str
-) -> dict:
-    """Email to brand POC when a creator submits a video for review."""
-    subject = f"Video Ready for Review: {creator_name} (@{creator_handle})"
-    body = f"""Hi {brand_poc_name},
-
-A new video has been submitted for your review by {creator_name} (@{creator_handle}).
-
-You can review the video here: {video_url}
-
-We've also sent this to your Slack channel for quick review and approval. You can approve or request changes directly from Slack, or simply reply to this email with your feedback.
-
-Looking forward to your thoughts!
-
-Best,
-Jennifer
-INFLUENCE Team
-"""
-    return {"subject": subject, "body": body}
-
-
-def campaign_kickoff(creator_name: str, brand_name: str, deadline: str, post_type: str) -> dict:
-    """Welcome email to creator when a new campaign is set up."""
-    subject = f"Welcome to the {brand_name} Campaign!"
-    body = f"""Hi {creator_name},
-
-We're thrilled to have you on board for the {brand_name} campaign! Here are the key details:
-
-- Brand: {brand_name}
-- Content Type: {post_type.capitalize()}
-- Deadline: {deadline}
-
-Please make sure to submit your draft video for brand review before the deadline. Once approved, you'll get the green light to post!
-
-If you have any questions about the brief, deliverables, or anything else, don't hesitate to reach out.
-
-Excited to see what you create!
-
-Best,
 Jennifer
 INFLUENCE Team
 """

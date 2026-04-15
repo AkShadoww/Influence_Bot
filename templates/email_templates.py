@@ -1,0 +1,106 @@
+"""
+Professional and friendly email templates for INFLUENCE Bot.
+All emails are sent from jennifer@useinfluence.xyz.
+"""
+
+
+def deadline_reminder_email(
+    creator_name: str,
+    campaign_name: str,
+    brand_name: str,
+    deadline: str,
+    reminder_type: str,
+    days_left: int,
+) -> dict:
+    """Email template for deadline reminders (3 days, 1 day, overdue)."""
+    if reminder_type == "overdue":
+        subject = f"Urgent: {brand_name} Content — Deadline Passed"
+        body = f"""Hi {creator_name},
+
+I hope you're doing well. I wanted to reach out regarding the {brand_name} campaign ("{campaign_name}") — the content deadline ({deadline}) has passed.
+
+This is becoming quite time-sensitive, and the brand has been checking in with us for updates. We really want to make sure everything goes smoothly for both you and the brand.
+
+Could you please reply to this email today with a status update? Even a quick note letting us know when we can expect the post would be really helpful.
+
+Thank you so much — we truly appreciate your collaboration!
+
+Best regards,
+Jennifer
+INFLUENCE Team
+"""
+    elif reminder_type == "1_day":
+        subject = f"Reminder: {brand_name} Content Due Tomorrow"
+        body = f"""Hi {creator_name},
+
+Just a quick heads-up — the deadline for your {brand_name} campaign ("{campaign_name}") content is tomorrow ({deadline}).
+
+Please make sure your content is posted on time. If there's anything holding things up or if you need any support from our end, let us know and we're happy to help!
+
+Looking forward to seeing the content go live.
+
+Best,
+Jennifer
+INFLUENCE Team
+"""
+    else:
+        subject = f"Upcoming Deadline: {brand_name} Content Due in {days_left} Days"
+        body = f"""Hi {creator_name},
+
+Hope you're doing great! Just a friendly reminder that the deadline for your {brand_name} campaign ("{campaign_name}") content is coming up on {deadline} — that's {days_left} days from now.
+
+If you haven't already, please make sure everything is on track for posting by the deadline. If you have any questions about the brief or deliverables, don't hesitate to reach out.
+
+Thanks for being such a great partner on this!
+
+Warm regards,
+Jennifer
+INFLUENCE Team
+"""
+    return {"subject": subject, "body": body}
+
+
+def video_approved(creator_name: str, brand_name: str) -> dict:
+    """Email to creator when their video has been approved by the brand."""
+    subject = f"Great News! Your {brand_name} Video Has Been Approved"
+    body = f"""Hi {creator_name},
+
+Amazing news — the {brand_name} team has reviewed and approved your video! Everything looks fantastic, and they're really happy with the content.
+
+You're all set to go ahead and post it according to the campaign guidelines. Just a quick reminder to make sure all the required tags, hashtags, and mentions are included as discussed.
+
+Once it's live, please share the post link with us so we can track the performance.
+
+Thanks for the awesome work — you absolutely nailed it!
+
+Cheers,
+Jennifer
+INFLUENCE Team
+"""
+    return {"subject": subject, "body": body}
+
+
+def video_changes_requested(
+    creator_name: str, brand_name: str, feedback: str
+) -> dict:
+    """Email to creator when the brand requests changes to their video."""
+    subject = f"Feedback on Your {brand_name} Video — Small Changes Needed"
+    body = f"""Hi {creator_name},
+
+Thanks so much for submitting your video for {brand_name}! The brand team has reviewed it and they really liked the overall direction. They do have a few notes they'd love for you to incorporate:
+
+---
+{feedback}
+---
+
+We know revisions can be a bit of extra work, but these tweaks will really help make the final content shine. Once you've made the updates, please resubmit the revised video and we'll get it back to the brand for a quick final review.
+
+If you have any questions about the feedback, feel free to reach out — happy to clarify anything!
+
+Thanks for being such a great partner on this.
+
+Warm regards,
+Jennifer
+INFLUENCE Team
+"""
+    return {"subject": subject, "body": body}

@@ -58,8 +58,19 @@ class ReelStatsAPI:
         """
         Fetch all campaigns and flatten into a list of creator dicts,
         each enriched with campaign info.
+
+        If Config.TEST_CAMPAIGN_NAME is set, only creators belonging to
+        the campaign with that exact name are returned.
         """
         campaigns = self.get_campaigns()
+        test_campaign_name = Config.TEST_CAMPAIGN_NAME
+        if test_campaign_name:
+            campaigns = [c for c in campaigns if c.get("name") == test_campaign_name]
+            logger.info(
+                f"TEST_CAMPAIGN_NAME='{test_campaign_name}' set: "
+                f"restricted to {len(campaigns)} campaign(s)"
+            )
+
         creators = []
         for campaign in campaigns:
             for creator in campaign.get("creators", []):

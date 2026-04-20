@@ -24,8 +24,7 @@ class Config:
     EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Jennifer - INFLUENCE")
 
     # --- Application ---
-    APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
-    APP_PORT = int(os.environ.get("APP_PORT", 3000))
+    # Host/port binding is handled by gunicorn ($PORT on Railway), not here.
     DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///influence_bot.db")
 
     # Poll interval for the safety-net fallback. Real-time notifications come

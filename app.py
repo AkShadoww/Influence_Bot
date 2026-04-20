@@ -14,6 +14,7 @@ Email: jennifer@useinfluence.xyz
 ReelStats API: configured via REELSTATS_API_URL env var
 """
 
+import atexit
 import logging
 
 from flask import Flask, request, jsonify
@@ -125,25 +126,14 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Startup — runs at import time under gunicorn (`app:flask_app`).
+# Gunicorn must be started with --workers 1 so the in-process scheduler
+# runs exactly once; multiple workers would fire every scheduled job N
+# times and race on the SQLite dedup tables.
 # ---------------------------------------------------------------------------
-def main():
-    logger.info("Starting INFLUENCE Bot...")
-    logger.info(f"ReelStats API: {Config.REELSTATS_API_URL}")
-    logger.info(f"Poll interval: {Config.POLL_INTERVAL_SECONDS}s (webhook fallback)")
+logger.info("Starting INFLUENCE Bot...")
+logger.info(f"ReelStats API: {Config.REELSTATS_API_URL}")
+logger.info(f"Poll interval: {Config.POLL_INTERVAL_SECONDS}s (webhook fallback)")
 
-    # Start the polling scheduler
-    scheduler_service.start()
-
-    try:
-        flask_app.run(
-            host=Config.APP_HOST,
-            port=Config.APP_PORT,
-            debug=False,
-        )
-    finally:
-        scheduler_service.shutdown()
-
-
-if __name__ == "__main__":
-    main()
+scheduler_service.start()
+atexit.register(scheduler_service.shutdown)

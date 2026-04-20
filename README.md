@@ -134,17 +134,60 @@ At https://api.slack.com/apps, create a new app with:
 In Tally Dashboard -> Your Form -> Integrations -> Webhooks:
 - Webhook URL: `https://your-domain/webhooks/tally`
 
-### 5. Run
+### 5. Deploy to Railway
 
-```bash
-python app.py
-```
+The bot is designed to run on [Railway](https://railway.app) — `git push`
+to the deploy branch and Railway rebuilds and redeploys automatically.
+There is no local run path; gunicorn (pinned to one worker so the
+in-process APScheduler doesn't fire jobs multiple times) is the only
+supported server.
 
-The bot starts on port 3000 by default. Use a tunnel (e.g., ngrok) for development:
+**One-time setup:**
 
-```bash
-ngrok http 3000
-```
+1. **Create project.** Railway dashboard → *New Project* → *Deploy from
+   GitHub repo* → pick `AkShadoww/Influence_Bot` → select the deploy
+   branch.
+
+2. **Add a Volume for SQLite.** Service → *Settings* → *Volumes* → *New
+   Volume*, mount path `/data`, size 1 GB. Without this, the database
+   is wiped on every redeploy.
+
+3. **Set environment variables** in the service's *Variables* tab
+   (see `.env.example` for the full list):
+
+   | Variable | Value |
+   |---|---|
+   | `BOT_TOKEN` | ReelStats polling token |
+   | `REELSTATS_API_URL` | `https://campaigns.influence.technology` |
+   | `SLACK_BOT_TOKEN` | `xoxb-…` |
+   | `SLACK_SIGNING_SECRET` | from Slack app |
+   | `SLACK_CHANNEL_ID` | e.g. `C0XXXXXXXXX` |
+   | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `EMAIL_FROM_NAME` | Jennifer's SMTP creds |
+   | `DATABASE_URL` | `sqlite:////data/influence_bot.db` *(four slashes)* |
+   | `POLL_INTERVAL_SECONDS` | `60` *(optional)* |
+   | `TEST_CAMPAIGN_NAME` | `Dummy testing` *(optional, while testing)* |
+
+   Railway also injects `PORT` automatically — don't set it yourself.
+
+4. **Grab the public URL.** Service → *Settings* → *Networking* →
+   *Generate Domain*. You'll get `https://<service>.up.railway.app`.
+
+5. **Update Slack app URLs** at https://api.slack.com/apps:
+   - *Event Subscriptions* → `https://<url>/slack/events`
+   - *Slash Commands* (each one) → `https://<url>/slack/commands`
+   - *Interactivity & Shortcuts* → `https://<url>/slack/actions`
+
+6. **Update ReelStats webhook target.** On the ReelStats server, set
+   `SLACK_WEBHOOK_URL=https://<url>/webhook` (see `BOT_API.md`).
+
+7. **Verify.**
+   - `curl https://<url>/health` → `200` JSON.
+   - Run `/influence-check` in Slack → no timeout.
+   - Check Railway logs for a single
+     `Scheduler started: polling every 60s, daily summary at 9 AM` line.
+
+From then on, every `git push` to the deploy branch triggers a new
+Railway build + rollout automatically.
 
 ## Slack Commands
 

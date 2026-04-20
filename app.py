@@ -101,19 +101,28 @@ def reelstats_webhook():
     Receive webhook events from the ReelStats server.
     Events: review_submitted, video_links_submitted
     """
-    payload = request.get_json()
+    payload = request.get_json(silent=True)
     if not payload:
+        logger.warning("Received webhook with no JSON payload")
         return jsonify({"error": "No payload"}), 400
 
     event_type = payload.get("event", "unknown")
-    logger.info(f"Received webhook event: {event_type}")
+    creator = (payload.get("creator") or {}).get("username", "?")
+    campaign = (payload.get("campaign") or {}).get("name", "?")
+    logger.info(
+        f"Received webhook event: {event_type} "
+        f"(creator=@{creator}, campaign='{campaign}')"
+    )
 
-    success = webhook_handler.handle_event(payload)
+    try:
+        success = webhook_handler.handle_event(payload)
+    except Exception as e:
+        logger.exception(f"Unhandled error processing webhook {event_type}: {e}")
+        return jsonify({"status": "error", "event": event_type}), 500
 
     if success:
         return jsonify({"status": "ok"}), 200
-    else:
-        return jsonify({"status": "unhandled", "event": event_type}), 200
+    return jsonify({"status": "failed", "event": event_type}), 500
 
 
 # ---------------------------------------------------------------------------

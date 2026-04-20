@@ -41,10 +41,16 @@ def build_milestone_blocks(
     ]
 
 
+def _mark_as_paid_value(campaign_id: str, creator_username: str) -> str:
+    """Encode the identifiers needed by the mark_as_paid action handler."""
+    return f"{campaign_id}|{creator_username}"
+
+
 def build_deliverable_complete_blocks(
     creator_username: str,
     campaign_name: str,
     brand_name: str,
+    campaign_id: str = "",
 ) -> list[dict]:
     """Notification when all deliverables are complete — flag for payment."""
     return [
@@ -65,6 +71,22 @@ def build_deliverable_complete_blocks(
                     f":moneybag: *This creator is ready to be paid.*"
                 ),
             },
+        },
+        {
+            "type": "actions",
+            "block_id": f"mark_paid_{campaign_id}_{creator_username}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "mark_as_paid",
+                    "style": "primary",
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":moneybag: Mark as paid",
+                    },
+                    "value": _mark_as_paid_value(campaign_id, creator_username),
+                },
+            ],
         },
         {"type": "divider"},
     ]
@@ -185,6 +207,7 @@ def build_payment_summary_blocks(completed_creators: list[dict]) -> list[dict]:
         username = creator.get("username", "Unknown")
         campaign_name = creator.get("campaign_name", "")
         brand_name = creator.get("brand_name", "")
+        campaign_id = creator.get("campaign_id", "")
         blocks.append(
             {
                 "type": "section",
@@ -194,6 +217,16 @@ def build_payment_summary_blocks(completed_creators: list[dict]) -> list[dict]:
                         f":moneybag: *@{username}* — "
                         f"{campaign_name} ({brand_name})"
                     ),
+                },
+                "accessory": {
+                    "type": "button",
+                    "action_id": "mark_as_paid",
+                    "style": "primary",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Mark as paid",
+                    },
+                    "value": _mark_as_paid_value(campaign_id, username),
                 },
             }
         )

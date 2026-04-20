@@ -24,6 +24,7 @@ from config import Config
 from models.models import init_db
 from bot.handlers import register_event_handlers
 from bot.commands import register_commands
+from bot.actions import register_actions
 from services.email_service import EmailService
 from services.reelstats_api import ReelStatsAPI
 from services.webhook_handler import WebhookHandler
@@ -64,6 +65,7 @@ scheduler_service = SchedulerService(bolt_app.client, email_service, reelstats_a
 # ---------------------------------------------------------------------------
 register_event_handlers(bolt_app)
 register_commands(bolt_app, scheduler_service, reelstats_api)
+register_actions(bolt_app)
 
 # ---------------------------------------------------------------------------
 # Flask App  (wraps Bolt for HTTP endpoints)

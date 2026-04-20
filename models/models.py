@@ -73,12 +73,33 @@ class DeadlineReminder(Base):
     creator_username = Column(String(255), nullable=False)
     reminder_type = Column(String(50), nullable=False)  # "3_days", "1_day", "overdue"
     notified_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # Deprecated: email dedup now lives in the EmailLog table.
     email_sent = Column(Boolean, default=False)
 
     __table_args__ = (
         UniqueConstraint(
             "campaign_id", "creator_username", "reminder_type",
             name="uq_deadline_reminder",
+        ),
+    )
+
+
+class EmailLog(Base):
+    """Tracks which follow-up emails have been successfully sent (dedup)."""
+    __tablename__ = "email_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    recipient_email = Column(String(320), nullable=False)
+    template_type = Column(String(64), nullable=False)
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+    sent_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "recipient_email", "template_type",
+            "campaign_id", "creator_username",
+            name="uq_email_log",
         ),
     )
 

@@ -57,8 +57,8 @@ bolt_app = App(
 # ---------------------------------------------------------------------------
 email_service = EmailService()
 reelstats_api = ReelStatsAPI()
-webhook_handler = WebhookHandler(bolt_app.client)
 scheduler_service = SchedulerService(bolt_app.client, email_service, reelstats_api)
+webhook_handler = WebhookHandler(bolt_app.client, scheduler_service)
 
 # ---------------------------------------------------------------------------
 # Register Slack Handlers
@@ -130,7 +130,7 @@ def health():
 def main():
     logger.info("Starting INFLUENCE Bot...")
     logger.info(f"ReelStats API: {Config.REELSTATS_API_URL}")
-    logger.info(f"Poll interval: {Config.POLL_INTERVAL_MINUTES} minutes")
+    logger.info(f"Poll interval: {Config.POLL_INTERVAL_SECONDS}s (webhook fallback)")
 
     # Start the polling scheduler
     scheduler_service.start()

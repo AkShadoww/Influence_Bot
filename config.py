@@ -27,7 +27,17 @@ class Config:
     APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
     APP_PORT = int(os.environ.get("APP_PORT", 3000))
     DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///influence_bot.db")
-    POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES", 5))
+
+    # Poll interval for the safety-net fallback. Real-time notifications come
+    # from ReelStats webhooks; this loop catches anything a dropped webhook
+    # missed. Prefer POLL_INTERVAL_SECONDS; POLL_INTERVAL_MINUTES is legacy.
+    _poll_seconds = os.environ.get("POLL_INTERVAL_SECONDS")
+    if _poll_seconds is not None:
+        POLL_INTERVAL_SECONDS = int(_poll_seconds)
+    elif os.environ.get("POLL_INTERVAL_MINUTES") is not None:
+        POLL_INTERVAL_SECONDS = int(os.environ["POLL_INTERVAL_MINUTES"]) * 60
+    else:
+        POLL_INTERVAL_SECONDS = 60
 
     # --- Testing ---
     # If set, the bot only processes the campaign with this exact name.

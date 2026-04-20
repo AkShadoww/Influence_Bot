@@ -162,10 +162,85 @@ Fired when a creator submits a video for review.
 }
 ```
 
+### Live-Data Events (drive scheduler checks in real time)
+
+The four events below replace the 5-minute polling delay with zero-latency
+notifications. The bot still polls `GET /api/bot/campaigns` every 60 seconds
+as a safety net, so dropping any of these events only delays notification
+by up to a minute — it does not lose it. Internal dedup tables ensure
+duplicate webhook + poll deliveries are idempotent.
+
+**Shared payload shape.** All four events include `campaign` (with `id` —
+required for dedup — plus `name`, `brandName`, `slug`) and a `creator`
+object with the full creator record from `GET /api/bot/campaigns`:
+
+```json
+{
+  "campaign": {
+    "id": "fc6cd16f226f",
+    "name": "Reve Features",
+    "brandName": "Reve",
+    "slug": "reve/reve-features"
+  },
+  "creator": {
+    "username": "tharun.fyi",
+    "email": "tharunr16@gmail.com",
+    "deadline": "2026-04-22",
+    "deliverables": {
+      "minViews": 200000,
+      "minVideos": 2,
+      "allComplete": true
+    },
+    "totalViews": 5700740,
+    "totalVideosPosted": 3
+  }
+}
+```
+
+#### Event: `views_updated`
+
+Fire whenever `creator.totalViews` changes. Drives the milestone check
+(250K / 500K / 1M / 1.5M / 2M / 5M / 10M / 20M / 50M / 100M).
+
+```json
+{ "event": "views_updated", "timestamp": 1775922404706, "campaign": {...}, "creator": {...} }
+```
+
+#### Event: `deliverables_updated`
+
+Fire whenever `creator.deliverables.allComplete` flips or
+`creator.totalVideosPosted` changes. Drives the deliverables-complete
+payment flag and the upload follow-up check.
+
+```json
+{ "event": "deliverables_updated", "timestamp": 1775922404706, "campaign": {...}, "creator": {...} }
+```
+
+#### Event: `deadline_check`
+
+Fire once per day per active creator (suggested: between 08:00–09:00 in
+the campaign's timezone). Drives the deadline-reminder Slack + email
+flow and the upload follow-up check. Cheaper than polling.
+
+```json
+{ "event": "deadline_check", "timestamp": 1775922404706, "campaign": {...}, "creator": {...} }
+```
+
+#### Event: `creator_updated`
+
+Generic fallback — fire whenever any creator field changes and you don't
+want to classify the change. The bot runs all four per-creator checks
+(milestones, deliverables, deadline, upload follow-up).
+
+```json
+{ "event": "creator_updated", "timestamp": 1775922404706, "campaign": {...}, "creator": {...} }
+```
+
 ### Webhook Behavior
 
 - Fire-and-forget, 10 second timeout, no retries
 - Content-Type: application/json, Method: POST
+- Dedup is the bot's responsibility; duplicate events are safe
 
 ---
 

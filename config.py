@@ -28,3 +28,8 @@ class Config:
     APP_PORT = int(os.environ.get("APP_PORT", 3000))
     DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///influence_bot.db")
     POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES", 5))
+
+    # --- Testing ---
+    # If set, the bot only processes the campaign with this exact name.
+    # Leave empty/unset in production to process all campaigns.
+    TEST_CAMPAIGN_NAME = os.environ.get("TEST_CAMPAIGN_NAME") or None

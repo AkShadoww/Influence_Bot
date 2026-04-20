@@ -25,6 +25,17 @@ class WebhookHandler:
         """Route an incoming webhook event to the appropriate handler."""
         event_type = payload.get("event")
 
+        # Respect TEST_CAMPAIGN_NAME: drop webhooks for other campaigns.
+        test_campaign_name = Config.TEST_CAMPAIGN_NAME
+        if test_campaign_name:
+            campaign_name = payload.get("campaign", {}).get("name")
+            if campaign_name != test_campaign_name:
+                logger.info(
+                    f"Dropping webhook '{event_type}' for '{campaign_name}' "
+                    f"(TEST_CAMPAIGN_NAME='{test_campaign_name}')"
+                )
+                return True
+
         if event_type == "review_submitted":
             return self._handle_review_submitted(payload)
         elif event_type == "video_links_submitted":

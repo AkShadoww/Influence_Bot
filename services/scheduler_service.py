@@ -219,6 +219,7 @@ class SchedulerService:
                     creator_username=username,
                     campaign_name=creator.get("campaign_name", ""),
                     brand_name=creator.get("brand_name", ""),
+                    campaign_id=campaign_id,
                 )
                 self.client.chat_postMessage(
                     channel=self.channel,

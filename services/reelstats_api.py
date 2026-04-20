@@ -26,6 +26,9 @@ class ReelStatsAPI:
         """
         Fetch all campaigns from the ReelStats API.
         Optionally filter by campaign_id or creator username.
+
+        If Config.TEST_CAMPAIGN_NAME is set, the returned list is also
+        filtered to only that campaign by exact name match.
         """
         try:
             url = f"{self.base_url}/api/bot/campaigns"
@@ -48,6 +51,18 @@ class ReelStatsAPI:
             data = resp.json()
             campaigns = data.get("campaigns", [])
             logger.info(f"Fetched {len(campaigns)} campaigns from ReelStats API")
+
+            test_campaign_name = Config.TEST_CAMPAIGN_NAME
+            if test_campaign_name:
+                before = len(campaigns)
+                campaigns = [
+                    c for c in campaigns if c.get("name") == test_campaign_name
+                ]
+                logger.info(
+                    f"TEST_CAMPAIGN_NAME='{test_campaign_name}' set: "
+                    f"filtered {before} -> {len(campaigns)} campaign(s)"
+                )
+
             return campaigns
 
         except requests.RequestException as e:
@@ -57,7 +72,8 @@ class ReelStatsAPI:
     def get_all_creators(self) -> list[dict]:
         """
         Fetch all campaigns and flatten into a list of creator dicts,
-        each enriched with campaign info.
+        each enriched with campaign info. Respects Config.TEST_CAMPAIGN_NAME
+        via get_campaigns().
         """
         campaigns = self.get_campaigns()
         creators = []

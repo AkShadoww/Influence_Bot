@@ -20,35 +20,32 @@ logger = logging.getLogger(__name__)
 class WebhookHandler:
     def __init__(self, slack_client: WebClient):
         self.client = slack_client
-        self.channel = Config.SLACK_CHANNEL_ID
-        if not self.channel:
-            logger.error(
-                "SLACK_CHANNEL_ID is not set — webhook notifications will fail. "
-                "Set the SLACK_CHANNEL_ID environment variable to a valid channel ID."
-            )
         if not Config.SLACK_BOT_TOKEN:
             logger.error(
                 "SLACK_BOT_TOKEN is not set — webhook notifications will fail. "
                 "Set the SLACK_BOT_TOKEN environment variable."
             )
 
-    def _post_to_slack(self, text: str, blocks: list[dict], event_label: str) -> bool:
+    def _post_to_slack(
+        self, channel: str, text: str, blocks: list[dict], event_label: str
+    ) -> bool:
         """Post a message to Slack, distinguishing config vs. API errors."""
-        if not self.channel:
+        if not channel:
             logger.error(
-                f"Cannot post {event_label}: SLACK_CHANNEL_ID is not configured."
+                f"Cannot post {event_label}: target channel is not configured."
             )
             return False
 
         try:
             response = self.client.chat_postMessage(
-                channel=self.channel,
+                channel=channel,
                 text=text,
                 blocks=blocks,
             )
             if not response.get("ok"):
                 logger.error(
-                    f"Slack API returned non-ok for {event_label}: {response.data}"
+                    f"Slack API returned non-ok for {event_label} "
+                    f"(channel={channel}): {response.data}"
                 )
                 return False
             return True
@@ -56,7 +53,7 @@ class WebhookHandler:
             err = e.response.get("error") if e.response else str(e)
             logger.error(
                 f"Slack API error posting {event_label} to channel "
-                f"{self.channel}: {err}"
+                f"{channel}: {err}"
             )
             return False
 
@@ -110,13 +107,15 @@ class WebhookHandler:
             )
 
             posted = self._post_to_slack(
+                channel=Config.SLACK_CHANNEL_REVIEWS,
                 text=f"New review submitted by @{username} for {campaign_name}",
                 blocks=blocks,
                 event_label="review_submitted",
             )
             if posted:
                 logger.info(
-                    f"Review submitted notification sent: "
+                    f"Review submitted notification sent to "
+                    f"{Config.SLACK_CHANNEL_REVIEWS}: "
                     f"@{username} for {campaign_name} (link={video_link or 'none'})"
                 )
             return posted
@@ -156,13 +155,15 @@ class WebhookHandler:
             )
 
             posted = self._post_to_slack(
+                channel=Config.SLACK_CHANNEL_UPLOADS,
                 text=f"Video links submitted by @{username} for {campaign_name}",
                 blocks=blocks,
                 event_label="video_links_submitted",
             )
             if posted:
                 logger.info(
-                    f"Video links submitted notification sent: "
+                    f"Video links submitted notification sent to "
+                    f"{Config.SLACK_CHANNEL_UPLOADS}: "
                     f"@{username} for {campaign_name} "
                     f"(platforms={[l['platform'] for l in links]})"
                 )

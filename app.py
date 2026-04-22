@@ -29,6 +29,12 @@ from services.email_service import EmailService
 from services.reelstats_api import ReelStatsAPI
 from services.webhook_handler import WebhookHandler
 from services.scheduler_service import SchedulerService
+from services.slack_oauth import (
+    InstallConfigError,
+    InstallStateError,
+    SlackInstallURLGenerator,
+    handle_oauth_callback,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -90,6 +96,57 @@ def slack_commands():
 def slack_actions():
     """Handle interactive actions (button clicks, modal submissions)."""
     return handler.handle(request)
+
+
+# ---------------------------------------------------------------------------
+# Slack OAuth — per-brand install links
+# ---------------------------------------------------------------------------
+@flask_app.route("/slack/install", methods=["GET"])
+@flask_app.route("/slack/install/<brand>", methods=["GET"])
+def slack_install(brand: str = None):
+    """
+    Generate an install URL and redirect the brand to Slack's OAuth consent
+    screen. The optional `<brand>` path segment is embedded (signed) in the
+    `state` param so we know which brand the installation belongs to when
+    Slack calls us back.
+    """
+    try:
+        generator = SlackInstallURLGenerator()
+    except InstallConfigError as exc:
+        logger.error("Slack OAuth not configured: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+    url = generator.build_install_url(brand=brand)
+    # 302 so a browser following the link lands on Slack's consent page.
+    return "", 302, {"Location": url}
+
+
+@flask_app.route("/slack/oauth_redirect", methods=["GET"])
+def slack_oauth_redirect():
+    """OAuth callback: Slack redirects here with ?code=...&state=..."""
+    code = request.args.get("code")
+    state = request.args.get("state")
+    error = request.args.get("error")
+    if error:
+        return jsonify({"status": "denied", "error": error}), 400
+    if not code or not state:
+        return jsonify({"error": "Missing code or state"}), 400
+
+    try:
+        install = handle_oauth_callback(code=code, state=state)
+    except InstallStateError as exc:
+        logger.warning("Invalid OAuth state: %s", exc)
+        return jsonify({"error": "Invalid state"}), 400
+    except Exception as exc:
+        logger.exception("OAuth callback failed: %s", exc)
+        return jsonify({"error": "Install failed"}), 500
+
+    return jsonify({
+        "status": "installed",
+        "brand": install.brand,
+        "team": install.team_name,
+        "channel": install.channel_name,
+    }), 200
 
 
 # ---------------------------------------------------------------------------

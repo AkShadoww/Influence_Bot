@@ -146,6 +146,74 @@ The bot starts on port 3000 by default. Use a tunnel (e.g., ngrok) for developme
 ngrok http 3000
 ```
 
+## Generating Install Links for Brands
+
+Each brand installs INFLUENCE Bot into their own Slack workspace via a signed
+OAuth link. The `incoming-webhook` scope causes Slack to prompt the installing
+user to pick a channel during consent — that channel is stored alongside the
+workspace token and is where the bot posts for that brand.
+
+### 1. One-time setup on the Slack app
+
+At https://api.slack.com/apps -> your app:
+
+- **OAuth & Permissions** -> **Redirect URLs**: add
+  `https://your-domain/slack/oauth_redirect`
+- **Manage Distribution**: complete the checklist and activate public
+  distribution (required for installing into other workspaces)
+- **Scopes** -> Bot Token Scopes: `chat:write`, `channels:read`, `commands`,
+  `incoming-webhook`, `users:read`
+
+Then set these env vars on the bot host:
+
+```
+SLACK_CLIENT_ID=...           # from "Basic Information" -> "App Credentials"
+SLACK_CLIENT_SECRET=...
+SLACK_OAUTH_REDIRECT_URI=https://your-domain/slack/oauth_redirect
+# Optional — defaults to the scopes listed above
+SLACK_OAUTH_SCOPES=chat:write,channels:read,commands,incoming-webhook,users:read
+```
+
+### 2. Generate a per-brand link
+
+Either use the CLI…
+
+```bash
+# Direct Slack URL (signed state embeds the brand; link expires after 10 min)
+python generate_install_link.py acme
+
+# Stable shareable URL routed through this app (no expiry — the signed state
+# is minted at request time)
+python generate_install_link.py acme --public-url https://your-domain
+# -> https://your-domain/slack/install/acme
+```
+
+…or just share the app route directly:
+
+```
+https://your-domain/slack/install/<brand-slug>
+```
+
+Hitting that route 302s the brand to Slack's consent screen.
+
+### 3. Flow the brand sees
+
+1. Brand opens `https://your-domain/slack/install/acme`
+2. Slack shows the app's consent screen; brand picks a channel + clicks Allow
+3. Slack redirects back to `/slack/oauth_redirect` with `?code=...&state=...`
+4. The bot exchanges the code for a bot token and saves a row in
+   `slack_installations` containing `team_id`, `bot_token`, `channel_id`,
+   `channel_name`, and `webhook_url`. From then on the bot uses that token +
+   channel when posting on that brand's behalf.
+
+### Endpoints added
+
+| Route | Purpose |
+|-------|---------|
+| `GET /slack/install` | Generic install URL (no brand attribution) |
+| `GET /slack/install/<brand>` | Per-brand install URL |
+| `GET /slack/oauth_redirect` | OAuth callback — exchanges `code` for a token |
+
 ## Slack Commands
 
 | Command | Description |

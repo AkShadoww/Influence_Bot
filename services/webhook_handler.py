@@ -9,6 +9,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from config import Config
+from models.models import ReviewSubmission, SessionLocal
 from templates.slack_blocks import (
     build_review_submitted_blocks,
     build_video_links_submitted_blocks,
@@ -28,13 +29,17 @@ class WebhookHandler:
 
     def _post_to_slack(
         self, channel: str, text: str, blocks: list[dict], event_label: str
-    ) -> bool:
-        """Post a message to Slack, distinguishing config vs. API errors."""
+    ) -> tuple[bool, str | None, str | None]:
+        """
+        Post a message to Slack and return (ok, resolved_channel_id, ts).
+        Channel id and ts are needed by callers that want to match future
+        thread replies back to the posted message.
+        """
         if not channel:
             logger.error(
                 f"Cannot post {event_label}: target channel is not configured."
             )
-            return False
+            return False, None, None
 
         try:
             response = self.client.chat_postMessage(
@@ -47,15 +52,15 @@ class WebhookHandler:
                     f"Slack API returned non-ok for {event_label} "
                     f"(channel={channel}): {response.data}"
                 )
-                return False
-            return True
+                return False, None, None
+            return True, response.get("channel"), response.get("ts")
         except SlackApiError as e:
             err = e.response.get("error") if e.response else str(e)
             logger.error(
                 f"Slack API error posting {event_label} to channel "
                 f"{channel}: {err}"
             )
-            return False
+            return False, None, None
 
     def handle_event(self, payload: dict) -> bool:
         """Route an incoming webhook event to the appropriate handler."""
@@ -89,8 +94,10 @@ class WebhookHandler:
 
             username = creator.get("username") or "Unknown"
             campaign_name = campaign.get("name") or "Unknown Campaign"
+            brand_name = campaign.get("brandName") or campaign.get("brand_name") or ""
             # ReelStats sends videoLink (camelCase); fall back to video_link.
             video_link = review.get("videoLink") or review.get("video_link") or ""
+            notes = review.get("notes", "") or ""
 
             if not video_link:
                 logger.warning(
@@ -98,27 +105,58 @@ class WebhookHandler:
                     f"{campaign_name} has no videoLink field"
                 )
 
+            db = SessionLocal()
+            try:
+                submission = ReviewSubmission(
+                    campaign_slug=campaign.get("slug"),
+                    campaign_name=campaign_name,
+                    brand_name=brand_name,
+                    creator_username=username,
+                    creator_email=creator.get("email"),
+                    video_link=video_link,
+                    notes=notes,
+                )
+                db.add(submission)
+                db.commit()
+                review_id = submission.id
+            finally:
+                db.close()
+
             blocks = build_review_submitted_blocks(
                 creator_username=username,
                 campaign_name=campaign_name,
-                brand_name=campaign.get("brandName") or campaign.get("brand_name") or "",
+                brand_name=brand_name,
                 video_link=video_link,
-                notes=review.get("notes", ""),
+                notes=notes,
+                review_id=review_id,
             )
 
-            posted = self._post_to_slack(
+            ok, resolved_channel, ts = self._post_to_slack(
                 channel=Config.SLACK_CHANNEL_REVIEWS,
                 text=f"New review submitted by @{username} for {campaign_name}",
                 blocks=blocks,
                 event_label="review_submitted",
             )
-            if posted:
+
+            if ok and ts:
+                db = SessionLocal()
+                try:
+                    row = db.query(ReviewSubmission).get(review_id)
+                    if row is not None:
+                        row.slack_channel = resolved_channel
+                        row.slack_ts = ts
+                        db.commit()
+                finally:
+                    db.close()
+
+            if ok:
                 logger.info(
                     f"Review submitted notification sent to "
                     f"{Config.SLACK_CHANNEL_REVIEWS}: "
-                    f"@{username} for {campaign_name} (link={video_link or 'none'})"
+                    f"@{username} for {campaign_name} "
+                    f"(review_id={review_id}, link={video_link or 'none'})"
                 )
-            return posted
+            return ok
 
         except Exception as e:
             logger.exception(f"Failed to handle review_submitted: {e}")
@@ -154,20 +192,20 @@ class WebhookHandler:
                 links=links,
             )
 
-            posted = self._post_to_slack(
+            ok, _channel, _ts = self._post_to_slack(
                 channel=Config.SLACK_CHANNEL_UPLOADS,
                 text=f"Video links submitted by @{username} for {campaign_name}",
                 blocks=blocks,
                 event_label="video_links_submitted",
             )
-            if posted:
+            if ok:
                 logger.info(
                     f"Video links submitted notification sent to "
                     f"{Config.SLACK_CHANNEL_UPLOADS}: "
                     f"@{username} for {campaign_name} "
                     f"(platforms={[l['platform'] for l in links]})"
                 )
-            return posted
+            return ok
 
         except Exception as e:
             logger.exception(f"Failed to handle video_links_submitted: {e}")

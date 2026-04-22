@@ -240,6 +240,7 @@ def build_review_submitted_blocks(
     brand_name: str,
     video_link: str,
     notes: str,
+    review_id: int | None = None,
 ) -> list[dict]:
     """Webhook event: creator submitted a video for review."""
     text_parts = [
@@ -251,7 +252,7 @@ def build_review_submitted_blocks(
     if notes:
         text_parts.append(f":memo: *Notes:* {notes}")
 
-    return [
+    blocks: list[dict] = [
         {
             "type": "header",
             "text": {
@@ -266,8 +267,33 @@ def build_review_submitted_blocks(
                 "text": "\n".join(text_parts),
             },
         },
-        {"type": "divider"},
     ]
+
+    if review_id is not None:
+        blocks.append(
+            {
+                "type": "actions",
+                "block_id": f"review_actions_{review_id}",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "review_approve",
+                        "style": "primary",
+                        "text": {"type": "plain_text", "text": "Approve"},
+                        "value": str(review_id),
+                    },
+                    {
+                        "type": "button",
+                        "action_id": "review_request_changes",
+                        "text": {"type": "plain_text", "text": "Request Changes"},
+                        "value": str(review_id),
+                    },
+                ],
+            }
+        )
+
+    blocks.append({"type": "divider"})
+    return blocks
 
 
 def build_video_links_submitted_blocks(

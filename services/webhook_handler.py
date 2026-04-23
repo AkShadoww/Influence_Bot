@@ -119,7 +119,6 @@ class WebhookHandler:
             username = creator.get("username") or "Unknown"
             campaign_name = campaign.get("name") or "Unknown Campaign"
             brand_name = campaign.get("brandName") or campaign.get("brand_name") or ""
-            # ReelStats sends videoLink (camelCase); fall back to video_link.
             video_link = review.get("videoLink") or review.get("video_link") or ""
             notes = review.get("notes", "") or ""
 
@@ -155,9 +154,6 @@ class WebhookHandler:
                 review_id=review_id,
             )
 
-            self.client.chat_postMessage(
-                channel=Config.SLACK_CHANNEL_REVIEWS,
-                text=f"New review submitted by @{creator.get('username')} for {campaign.get('name')}",
             ok, resolved_channel, ts = self._post_to_slack(
                 channel=Config.SLACK_CHANNEL_REVIEWS,
                 text=f"New review submitted by @{username} for {campaign_name}",
@@ -219,9 +215,6 @@ class WebhookHandler:
                 links=links,
             )
 
-            self.client.chat_postMessage(
-                channel=Config.SLACK_CHANNEL_UPLOADS,
-                text=f"Video links submitted by @{creator.get('username')} for {campaign.get('name')}",
             ok, _channel, _ts = self._post_to_slack(
                 channel=Config.SLACK_CHANNEL_UPLOADS,
                 text=f"Video links submitted by @{username} for {campaign_name}",

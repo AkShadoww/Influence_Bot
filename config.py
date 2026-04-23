@@ -16,22 +16,26 @@ class Config:
     SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
     # Fallback channel — used when a per-type channel below isn't set.
     SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
-    # Per-notification-type channels. Each falls back to SLACK_CHANNEL_ID.
-    SLACK_CHANNEL_REVIEWS = os.environ.get("SLACK_CHANNEL_REVIEWS") or SLACK_CHANNEL_ID
-    SLACK_CHANNEL_UPLOADS = os.environ.get("SLACK_CHANNEL_UPLOADS") or SLACK_CHANNEL_ID
-    SLACK_CHANNEL_PAYMENTS = os.environ.get("SLACK_CHANNEL_PAYMENTS") or SLACK_CHANNEL_ID
-    SLACK_CHANNEL_MILESTONES = os.environ.get("SLACK_CHANNEL_MILESTONES") or SLACK_CHANNEL_ID
-    SLACK_CHANNEL_DEADLINES = os.environ.get("SLACK_CHANNEL_DEADLINES") or SLACK_CHANNEL_ID
 
-    # --- Per-category Slack channels ---
-    # Each notification type routes to its own channel. Accepts a channel name
+    # Per-notification-type channels. Each resolves env var → SLACK_CHANNEL_ID
+    # → hardcoded channel-name default. Accepts a channel name
     # (e.g. "#content-reviews") or a channel ID (e.g. "C0XXXXXXXXX"). The bot
     # must be a member of each channel or posts fail with `not_in_channel`.
-    SLACK_CHANNEL_REVIEWS = os.environ.get("SLACK_CHANNEL_REVIEWS") or "#content-reviews"
-    SLACK_CHANNEL_UPLOADS = os.environ.get("SLACK_CHANNEL_UPLOADS") or "#content-uploads"
-    SLACK_CHANNEL_PAYMENTS = os.environ.get("SLACK_CHANNEL_PAYMENTS") or "#payment-reminders"
-    SLACK_CHANNEL_MILESTONES = os.environ.get("SLACK_CHANNEL_MILESTONES") or "#breakout-content-alerts"
-    SLACK_CHANNEL_DEADLINES = os.environ.get("SLACK_CHANNEL_DEADLINES") or "#creator-deadlines"
+    SLACK_CHANNEL_REVIEWS = (
+        os.environ.get("SLACK_CHANNEL_REVIEWS") or SLACK_CHANNEL_ID or "#content-reviews"
+    )
+    SLACK_CHANNEL_UPLOADS = (
+        os.environ.get("SLACK_CHANNEL_UPLOADS") or SLACK_CHANNEL_ID or "#content-uploads"
+    )
+    SLACK_CHANNEL_PAYMENTS = (
+        os.environ.get("SLACK_CHANNEL_PAYMENTS") or SLACK_CHANNEL_ID or "#payment-reminders"
+    )
+    SLACK_CHANNEL_MILESTONES = (
+        os.environ.get("SLACK_CHANNEL_MILESTONES") or SLACK_CHANNEL_ID or "#breakout-content-alerts"
+    )
+    SLACK_CHANNEL_DEADLINES = (
+        os.environ.get("SLACK_CHANNEL_DEADLINES") or SLACK_CHANNEL_ID or "#creator-deadlines"
+    )
 
     # --- Email (jennifer@useinfluence.xyz) ---
     SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")

@@ -52,7 +52,6 @@ class SchedulerService:
         self.client = slack_client
         self.email_service = email_service
         self.api = reelstats_api
-        self.channel = Config.SLACK_CHANNEL_ID
         self.scheduler = BackgroundScheduler()
 
     def start(self):
@@ -166,7 +165,7 @@ class SchedulerService:
             current_views=_format_views(current_views),
         )
         self.client.chat_postMessage(
-            channel=self.channel,
+            channel=Config.SLACK_CHANNEL_MILESTONES,
             text=(
                 f"Milestone! @{creator.get('username')} hit "
                 f"{milestone_label} views on {creator.get('campaign_name')}"
@@ -226,7 +225,7 @@ class SchedulerService:
                 campaign_id=campaign_id,
             )
             self.client.chat_postMessage(
-                channel=self.channel,
+                channel=Config.SLACK_CHANNEL_PAYMENTS,
                 text=(
                     f"Deliverables complete! @{username} partnering with "
                     f"{creator.get('brand_name')} has completed their "
@@ -319,7 +318,7 @@ class SchedulerService:
                 days_left=days_left,
             )
             self.client.chat_postMessage(
-                channel=self.channel,
+                channel=Config.SLACK_CHANNEL_DEADLINES,
                 text=f"Deadline reminder for @{username}: {reminder_type.replace('_', ' ')}",
                 blocks=blocks,
             )
@@ -407,7 +406,7 @@ class SchedulerService:
                 days_left=days_left,
             )
             self.client.chat_postMessage(
-                channel=self.channel,
+                channel=Config.SLACK_CHANNEL_UPLOADS,
                 text=(
                     f"Upload reminder: @{username} has posted "
                     f"{total_posted}/{min_videos} videos, "
@@ -446,14 +445,14 @@ class SchedulerService:
 
         if not completed:
             self.client.chat_postMessage(
-                channel=self.channel,
+                channel=Config.SLACK_CHANNEL_PAYMENTS,
                 text=":sunrise: *Daily Payment Summary*\nNo creators with completed deliverables pending payment.",
             )
             return
 
         blocks = build_payment_summary_blocks(completed)
         self.client.chat_postMessage(
-            channel=self.channel,
+            channel=Config.SLACK_CHANNEL_PAYMENTS,
             text=f"Daily Payment Summary: {len(completed)} creator(s) ready for payment",
             blocks=blocks,
         )

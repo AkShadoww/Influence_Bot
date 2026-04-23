@@ -29,7 +29,6 @@ class WebhookHandler:
     def __init__(self, slack_client: WebClient, scheduler_service=None):
         self.client = slack_client
         self.scheduler = scheduler_service
-        self.channel = Config.SLACK_CHANNEL_ID
 
     def handle_event(self, payload: dict) -> bool:
         """Route an incoming webhook event to the appropriate handler."""
@@ -84,7 +83,7 @@ class WebhookHandler:
             )
 
             self.client.chat_postMessage(
-                channel=self.channel,
+                channel=Config.SLACK_CHANNEL_REVIEWS,
                 text=f"New review submitted by @{creator.get('username')} for {campaign.get('name')}",
                 blocks=blocks,
             )
@@ -121,7 +120,7 @@ class WebhookHandler:
             )
 
             self.client.chat_postMessage(
-                channel=self.channel,
+                channel=Config.SLACK_CHANNEL_UPLOADS,
                 text=f"Video links submitted by @{creator.get('username')} for {campaign.get('name')}",
                 blocks=blocks,
             )

@@ -14,7 +14,14 @@ class Config:
     # --- Slack ---
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
     SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
+    # Fallback channel — used when a per-type channel below isn't set.
     SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
+    # Per-notification-type channels. Each falls back to SLACK_CHANNEL_ID.
+    SLACK_CHANNEL_REVIEWS = os.environ.get("SLACK_CHANNEL_REVIEWS") or SLACK_CHANNEL_ID
+    SLACK_CHANNEL_UPLOADS = os.environ.get("SLACK_CHANNEL_UPLOADS") or SLACK_CHANNEL_ID
+    SLACK_CHANNEL_PAYMENTS = os.environ.get("SLACK_CHANNEL_PAYMENTS") or SLACK_CHANNEL_ID
+    SLACK_CHANNEL_MILESTONES = os.environ.get("SLACK_CHANNEL_MILESTONES") or SLACK_CHANNEL_ID
+    SLACK_CHANNEL_DEADLINES = os.environ.get("SLACK_CHANNEL_DEADLINES") or SLACK_CHANNEL_ID
 
     # --- Email (jennifer@useinfluence.xyz) ---
     SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")

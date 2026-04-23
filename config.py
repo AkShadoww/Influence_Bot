@@ -23,6 +23,16 @@ class Config:
     SLACK_CHANNEL_MILESTONES = os.environ.get("SLACK_CHANNEL_MILESTONES") or SLACK_CHANNEL_ID
     SLACK_CHANNEL_DEADLINES = os.environ.get("SLACK_CHANNEL_DEADLINES") or SLACK_CHANNEL_ID
 
+    # --- Per-category Slack channels ---
+    # Each notification type routes to its own channel. Accepts a channel name
+    # (e.g. "#content-reviews") or a channel ID (e.g. "C0XXXXXXXXX"). The bot
+    # must be a member of each channel or posts fail with `not_in_channel`.
+    SLACK_CHANNEL_REVIEWS = os.environ.get("SLACK_CHANNEL_REVIEWS") or "#content-reviews"
+    SLACK_CHANNEL_UPLOADS = os.environ.get("SLACK_CHANNEL_UPLOADS") or "#content-uploads"
+    SLACK_CHANNEL_PAYMENTS = os.environ.get("SLACK_CHANNEL_PAYMENTS") or "#payment-reminders"
+    SLACK_CHANNEL_MILESTONES = os.environ.get("SLACK_CHANNEL_MILESTONES") or "#breakout-content-alerts"
+    SLACK_CHANNEL_DEADLINES = os.environ.get("SLACK_CHANNEL_DEADLINES") or "#creator-deadlines"
+
     # --- Email (jennifer@useinfluence.xyz) ---
     SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))

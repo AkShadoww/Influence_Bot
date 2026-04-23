@@ -206,6 +206,29 @@ class SchedulerService:
             )
             if existing:
                 return
+                db.add(alert)
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    continue
+
+                blocks = build_deliverable_complete_blocks(
+                    creator_username=username,
+                    campaign_name=creator.get("campaign_name", ""),
+                    brand_name=creator.get("brand_name", ""),
+                    campaign_id=campaign_id,
+                )
+                self.client.chat_postMessage(
+                    channel=Config.SLACK_CHANNEL_PAYMENTS,
+                    text=(
+                        f"Deliverables complete! @{username} partnering with "
+                        f"{creator.get('brand_name')} has completed their "
+                        f"deliverables and is supposed to be paid."
+                    ),
+                    blocks=blocks,
+                )
+                logger.info(f"Deliverable complete alert: @{username}")
 
             alert = DeliverableAlert(
                 campaign_id=campaign_id,
@@ -269,6 +292,20 @@ class SchedulerService:
             reminder_type = "3_days"
         else:
             return
+                # Send Slack notification
+                blocks = build_deadline_reminder_blocks(
+                    creator_username=username,
+                    campaign_name=creator.get("campaign_name", ""),
+                    brand_name=creator.get("brand_name", ""),
+                    deadline=deadline_str,
+                    reminder_type=reminder_type,
+                    days_left=days_left,
+                )
+                self.client.chat_postMessage(
+                    channel=Config.SLACK_CHANNEL_DEADLINES,
+                    text=f"Deadline reminder for @{username}: {reminder_type.replace('_', ' ')}",
+                    blocks=blocks,
+                )
 
         username = creator.get("username", "")
         campaign_id = creator.get("campaign_id", "")
@@ -382,6 +419,24 @@ class SchedulerService:
 
         username = creator.get("username", "")
         campaign_id = creator.get("campaign_id", "")
+                blocks = build_upload_followup_blocks(
+                    creator_username=username,
+                    campaign_name=creator.get("campaign_name", ""),
+                    brand_name=creator.get("brand_name", ""),
+                    videos_posted=total_posted,
+                    videos_required=min_videos,
+                    deadline=deadline_str,
+                    days_left=days_left,
+                )
+                self.client.chat_postMessage(
+                    channel=Config.SLACK_CHANNEL_DEADLINES,
+                    text=(
+                        f"Upload reminder: @{username} has posted "
+                        f"{total_posted}/{min_videos} videos, "
+                        f"{days_left} days until deadline"
+                    ),
+                    blocks=blocks,
+                )
 
         db = SessionLocal()
         try:

@@ -104,3 +104,26 @@ Jennifer
 INFLUENCE Team
 """
     return {"subject": subject, "body": body}
+
+
+def review_thread_comment(
+    creator_name: str, brand_name: str, commenter: str, comment: str
+) -> dict:
+    """Email to creator relaying a Slack thread reply on their review submission."""
+    subject = f"New Comment on Your {brand_name} Video Submission"
+    body = f"""Hi {creator_name},
+
+Someone from the {brand_name} team left a comment on your video submission:
+
+---
+{commenter}:
+{comment}
+---
+
+Feel free to reach out if you'd like to discuss or have any questions.
+
+Thanks!
+Jennifer
+INFLUENCE Team
+"""
+    return {"subject": subject, "body": body}

@@ -57,7 +57,9 @@ class Config:
 
     # --- Application ---
     APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
-    APP_PORT = int(os.environ.get("APP_PORT", 3000))
+    # Honor PaaS-assigned port (Railway/Heroku/Render set $PORT). Fall back to
+    # APP_PORT, then 3000 for local dev.
+    APP_PORT = int(os.environ.get("PORT") or os.environ.get("APP_PORT") or 3000)
     DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///influence_bot.db")
     POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES", 5))
 

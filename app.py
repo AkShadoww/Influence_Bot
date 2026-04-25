@@ -17,7 +17,7 @@ ReelStats API: configured via REELSTATS_API_URL env var
 import atexit
 import logging
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 
@@ -122,6 +122,77 @@ def slack_install(brand: str = None):
     return "", 302, {"Location": url}
 
 
+_INSTALL_RESULT_PAGE = """\
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>INFLUENCE Bot — {{ heading }}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 520px;
+      margin: 12vh auto;
+      padding: 0 24px;
+      line-height: 1.55;
+      color: #1d1d1f;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { color: #f2f2f7; background: #111; }
+      .card { background: #1c1c1e; border-color: #2c2c2e; }
+      code { background: #2c2c2e; }
+    }
+    .badge {
+      font-size: 56px;
+      line-height: 1;
+      margin-bottom: 12px;
+    }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    p  { margin: 8px 0; }
+    .card {
+      margin-top: 24px;
+      padding: 16px 20px;
+      border: 1px solid #e5e5ea;
+      border-radius: 12px;
+      background: #f9f9fb;
+    }
+    .row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; }
+    .row + .row { border-top: 1px solid rgba(0,0,0,0.06); }
+    .label { color: #6b7280; }
+    code { background: #f0f0f3; padding: 1px 6px; border-radius: 4px; font-size: 90%; }
+    .muted { color: #6b7280; font-size: 14px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <div class="badge">{{ badge }}</div>
+  <h1>{{ heading }}</h1>
+  <p>{{ message }}</p>
+  {% if details %}
+  <div class="card">
+    {% for label, value in details %}
+    <div class="row"><span class="label">{{ label }}</span><span><code>{{ value }}</code></span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <p class="muted">You can close this tab.</p>
+</body>
+</html>
+"""
+
+
+def _render_install_page(*, badge, heading, message, details=None, status_code=200):
+    html = render_template_string(
+        _INSTALL_RESULT_PAGE,
+        badge=badge,
+        heading=heading,
+        message=message,
+        details=details or [],
+    )
+    return html, status_code, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @flask_app.route("/slack/oauth_redirect", methods=["GET"])
 def slack_oauth_redirect():
     """OAuth callback: Slack redirects here with ?code=...&state=..."""
@@ -129,25 +200,52 @@ def slack_oauth_redirect():
     state = request.args.get("state")
     error = request.args.get("error")
     if error:
-        return jsonify({"status": "denied", "error": error}), 400
+        return _render_install_page(
+            badge="✕",
+            heading="Install cancelled",
+            message=f"Slack reported: {error}. No changes were made to your workspace.",
+            status_code=400,
+        )
     if not code or not state:
-        return jsonify({"error": "Missing code or state"}), 400
+        return _render_install_page(
+            badge="✕",
+            heading="Something's missing",
+            message="The install link is incomplete. Please open the link your INFLUENCE contact sent you again.",
+            status_code=400,
+        )
 
     try:
         install = handle_oauth_callback(code=code, state=state)
     except InstallStateError as exc:
         logger.warning("Invalid OAuth state: %s", exc)
-        return jsonify({"error": "Invalid state"}), 400
+        return _render_install_page(
+            badge="✕",
+            heading="Link expired",
+            message="This install link is no longer valid. Please ask your INFLUENCE contact for a fresh link.",
+            status_code=400,
+        )
     except Exception as exc:
         logger.exception("OAuth callback failed: %s", exc)
-        return jsonify({"error": "Install failed"}), 500
+        return _render_install_page(
+            badge="✕",
+            heading="Install failed",
+            message="Something went wrong on our end. Please try again, or contact INFLUENCE support.",
+            status_code=500,
+        )
 
-    return jsonify({
-        "status": "installed",
-        "brand": install.brand,
-        "team": install.team_name,
-        "channel": install.channel_name,
-    }), 200
+    channel = install.channel_name or "(channel not set)"
+    details = [("Workspace", install.team_name or install.team_id)]
+    if install.channel_name:
+        details.append(("Channel", f"#{install.channel_name}"))
+    if install.brand:
+        details.append(("Brand", install.brand))
+
+    return _render_install_page(
+        badge="✓",
+        heading="You're all set!",
+        message=f"INFLUENCE Bot is now installed and will post to #{channel}.",
+        details=details,
+    )
 
 
 # ---------------------------------------------------------------------------

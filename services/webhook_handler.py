@@ -1,6 +1,15 @@
 """
 Webhook handler for ReelStats server events.
-Processes review_submitted and video_links_submitted events.
+
+Existing events (immediate Slack messages):
+- review_submitted
+- video_links_submitted
+
+Live-data events (drive scheduler checks with zero polling delay):
+- views_updated
+- deliverables_updated
+- deadline_check
+- creator_updated
 """
 
 import logging
@@ -19,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class WebhookHandler:
-    def __init__(self, slack_client: WebClient):
+    def __init__(self, slack_client: WebClient, scheduler_service=None):
         self.client = slack_client
+        self.scheduler = scheduler_service
         if not Config.SLACK_BOT_TOKEN:
             logger.error(
                 "SLACK_BOT_TOKEN is not set — webhook notifications will fail. "
@@ -81,10 +91,24 @@ class WebhookHandler:
             return self._handle_review_submitted(payload)
         elif event_type == "video_links_submitted":
             return self._handle_video_links_submitted(payload)
+        elif event_type == "views_updated":
+            return self._run_checks(payload, ["milestones"])
+        elif event_type == "deliverables_updated":
+            return self._run_checks(payload, ["deliverables", "upload_followup"])
+        elif event_type == "deadline_check":
+            return self._run_checks(payload, ["deadline", "upload_followup"])
+        elif event_type == "creator_updated":
+            return self._run_checks(
+                payload,
+                ["milestones", "deliverables", "deadline", "upload_followup"],
+            )
         else:
             logger.warning(f"Unknown webhook event type: {event_type}")
             return False
 
+    # ------------------------------------------------------------------
+    # Existing handlers
+    # ------------------------------------------------------------------
     def _handle_review_submitted(self, payload: dict) -> bool:
         """Handle when a creator submits a video for review."""
         try:
@@ -95,7 +119,6 @@ class WebhookHandler:
             username = creator.get("username") or "Unknown"
             campaign_name = campaign.get("name") or "Unknown Campaign"
             brand_name = campaign.get("brandName") or campaign.get("brand_name") or ""
-            # ReelStats sends videoLink (camelCase); fall back to video_link.
             video_link = review.get("videoLink") or review.get("video_link") or ""
             notes = review.get("notes", "") or ""
 
@@ -210,3 +233,48 @@ class WebhookHandler:
         except Exception as e:
             logger.exception(f"Failed to handle video_links_submitted: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # Live-data handlers
+    # ------------------------------------------------------------------
+    def _run_checks(self, payload: dict, checks: list[str]) -> bool:
+        """Run the named per-creator scheduler checks against the payload."""
+        if self.scheduler is None:
+            logger.error("No scheduler wired into WebhookHandler; cannot run checks")
+            return False
+
+        creator = self._flatten_creator(payload)
+        if not creator.get("username") or not creator.get("campaign_id"):
+            logger.warning(
+                f"Live-data webhook missing username/campaign_id: {payload!r}"
+            )
+            return False
+
+        try:
+            if "milestones" in checks:
+                self.scheduler.check_milestones_for(creator)
+            if "deliverables" in checks:
+                self.scheduler.check_deliverables_complete_for(creator)
+            if "deadline" in checks:
+                self.scheduler.check_deadline_reminder_for(creator)
+            if "upload_followup" in checks:
+                self.scheduler.check_upload_followup_for(creator)
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed running {checks} for @{creator.get('username')}: {e}"
+            )
+            return False
+
+    @staticmethod
+    def _flatten_creator(payload: dict) -> dict:
+        """Normalize a webhook payload into the scheduler's flat creator dict."""
+        campaign = payload.get("campaign", {}) or {}
+        creator = payload.get("creator", {}) or {}
+        return {
+            **creator,
+            "campaign_id": campaign.get("id", ""),
+            "campaign_name": campaign.get("name", ""),
+            "brand_name": campaign.get("brandName", ""),
+            "campaign_slug": campaign.get("slug", ""),
+        }

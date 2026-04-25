@@ -175,6 +175,38 @@ class ReviewComment(Base):
     )
 
 
+class SlackInstallation(Base):
+    """
+    Per-workspace Slack install record, populated by the OAuth callback.
+    One row per (team_id, brand) install. The bot uses `bot_token` to post
+    into `channel_id` (the channel the installing user picked during OAuth,
+    surfaced via the `incoming-webhook` scope).
+    """
+    __tablename__ = "slack_installations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    brand = Column(String(255), nullable=True)  # slug/name from install link
+    team_id = Column(String(255), nullable=False)
+    team_name = Column(String(255), nullable=True)
+    enterprise_id = Column(String(255), nullable=True)
+
+    bot_user_id = Column(String(255), nullable=True)
+    bot_token = Column(Text, nullable=False)
+    scope = Column(Text, nullable=True)
+
+    # Populated when `incoming-webhook` is in scopes.
+    channel_id = Column(String(255), nullable=True)
+    channel_name = Column(String(255), nullable=True)
+    webhook_url = Column(Text, nullable=True)
+
+    installed_by_user_id = Column(String(255), nullable=True)
+    installed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "brand", name="uq_slack_install_team_brand"),
+    )
+
+
 class PaymentRecord(Base):
     """Persistent record of 'Mark as Paid' clicks."""
     __tablename__ = "payment_records"

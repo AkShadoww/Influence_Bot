@@ -130,38 +130,39 @@ _INSTALL_RESULT_PAGE = """\
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>INFLUENCE Bot — {{ heading }}</title>
   <style>
-    :root { color-scheme: light dark; }
+    html, body {
+      background: #ffffff;
+      color: #1d1d1f;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       max-width: 520px;
       margin: 12vh auto;
       padding: 0 24px;
       line-height: 1.55;
-      color: #1d1d1f;
     }
-    @media (prefers-color-scheme: dark) {
-      body { color: #f2f2f7; background: #111; }
-      .card { background: #1c1c1e; border-color: #2c2c2e; }
-      code { background: #2c2c2e; }
-    }
-    .badge {
-      font-size: 56px;
-      line-height: 1;
-      margin-bottom: 12px;
-    }
-    h1 { font-size: 24px; margin: 0 0 8px; }
-    p  { margin: 8px 0; }
+    .badge { font-size: 56px; line-height: 1; margin-bottom: 12px; }
+    h1 { font-size: 24px; margin: 0 0 8px; color: #1d1d1f; }
+    p  { margin: 8px 0; color: #1d1d1f; }
     .card {
       margin-top: 24px;
       padding: 16px 20px;
       border: 1px solid #e5e5ea;
       border-radius: 12px;
       background: #f9f9fb;
+      color: #1d1d1f;
     }
     .row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; }
     .row + .row { border-top: 1px solid rgba(0,0,0,0.06); }
     .label { color: #6b7280; }
-    code { background: #f0f0f3; padding: 1px 6px; border-radius: 4px; font-size: 90%; }
+    .value { color: #1d1d1f; font-weight: 500; }
+    code {
+      background: #ececf1;
+      color: #1d1d1f;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 90%;
+    }
     .muted { color: #6b7280; font-size: 14px; margin-top: 24px; }
   </style>
 </head>
@@ -172,7 +173,7 @@ _INSTALL_RESULT_PAGE = """\
   {% if details %}
   <div class="card">
     {% for label, value in details %}
-    <div class="row"><span class="label">{{ label }}</span><span><code>{{ value }}</code></span></div>
+    <div class="row"><span class="label">{{ label }}</span><span class="value">{{ value }}</span></div>
     {% endfor %}
   </div>
   {% endif %}
@@ -233,17 +234,21 @@ def slack_oauth_redirect():
             status_code=500,
         )
 
-    channel = install.channel_name or "(channel not set)"
+    # Slack sometimes returns the channel name with a leading "#", sometimes
+    # without — normalize so we never render "##social".
+    raw_channel = (install.channel_name or "").lstrip("#")
+    channel_display = f"#{raw_channel}" if raw_channel else "(channel not set)"
+
     details = [("Workspace", install.team_name or install.team_id)]
-    if install.channel_name:
-        details.append(("Channel", f"#{install.channel_name}"))
+    if raw_channel:
+        details.append(("Channel", channel_display))
     if install.brand:
         details.append(("Brand", install.brand))
 
     return _render_install_page(
         badge="✓",
         heading="You're all set!",
-        message=f"INFLUENCE Bot is now installed and will post to #{channel}.",
+        message=f"INFLUENCE Bot is now installed and will post to {channel_display}.",
         details=details,
     )
 

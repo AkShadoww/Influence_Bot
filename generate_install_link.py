@@ -24,6 +24,7 @@ Two modes:
 import argparse
 import sys
 
+from services.brand_router import slugify_brand
 from services.slack_oauth import InstallConfigError, SlackInstallURLGenerator
 
 
@@ -31,19 +32,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a Slack install link for a brand")
     parser.add_argument(
         "brand",
-        help="Brand slug (e.g. 'acme'). Embedded in the signed state so the "
-             "callback can attribute the install.",
+        help="Brand name as it appears in ReelStats (e.g. 'Acme' or 'Acme Inc'). "
+             "Will be slugified for matching at notification time.",
     )
     parser.add_argument(
         "--public-url",
         help="Public base URL of this app. If given, prints "
-             "<public-url>/slack/install/<brand> instead of a direct Slack URL.",
+             "<public-url>/slack/install/<slug> instead of a direct Slack URL.",
     )
     args = parser.parse_args()
 
+    slug = slugify_brand(args.brand)
+    if not slug:
+        print("error: brand name slugifies to empty string", file=sys.stderr)
+        return 1
+
     if args.public_url:
         base = args.public_url.rstrip("/")
-        print(f"{base}/slack/install/{args.brand}")
+        print(f"{base}/slack/install/{slug}")
         return 0
 
     try:
@@ -52,7 +58,7 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(generator.build_install_url(brand=args.brand))
+    print(generator.build_install_url(brand=slug))
     return 0
 
 

@@ -48,10 +48,12 @@ class SchedulerService:
         slack_client: WebClient,
         email_service: EmailService,
         reelstats_api: ReelStatsAPI,
+        brand_router=None,
     ):
         self.client = slack_client
         self.email_service = email_service
         self.api = reelstats_api
+        self.brand_router = brand_router
         self.scheduler = BackgroundScheduler()
 
     def start(self):
@@ -157,15 +159,25 @@ class SchedulerService:
         self, creator: dict, milestone: int, current_views: int
     ):
         milestone_label = _format_views(milestone)
+        brand_name = creator.get("brand_name", "")
         blocks = build_milestone_blocks(
             creator_username=creator.get("username", ""),
             campaign_name=creator.get("campaign_name", ""),
-            brand_name=creator.get("brand_name", ""),
+            brand_name=brand_name,
             milestone_label=milestone_label,
             current_views=_format_views(current_views),
         )
-        self.client.chat_postMessage(
-            channel=Config.SLACK_CHANNEL_MILESTONES,
+
+        if self.brand_router is not None:
+            route = self.brand_router.resolve(brand_name, Config.SLACK_CHANNEL_MILESTONES)
+            client = route.client
+            channel = route.channel
+        else:
+            client = self.client
+            channel = Config.SLACK_CHANNEL_MILESTONES
+
+        client.chat_postMessage(
+            channel=channel,
             text=(
                 f"Milestone! @{creator.get('username')} hit "
                 f"{milestone_label} views on {creator.get('campaign_name')}"

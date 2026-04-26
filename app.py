@@ -30,6 +30,7 @@ from services.email_service import EmailService
 from services.reelstats_api import ReelStatsAPI
 from services.webhook_handler import WebhookHandler
 from services.scheduler_service import SchedulerService
+from services.brand_router import BrandRouter, slugify_brand
 from services.slack_oauth import (
     InstallConfigError,
     InstallStateError,
@@ -64,8 +65,13 @@ bolt_app = App(
 # ---------------------------------------------------------------------------
 email_service = EmailService()
 reelstats_api = ReelStatsAPI()
-scheduler_service = SchedulerService(bolt_app.client, email_service, reelstats_api)
-webhook_handler = WebhookHandler(bolt_app.client, scheduler_service)
+brand_router = BrandRouter(default_client=bolt_app.client)
+scheduler_service = SchedulerService(
+    bolt_app.client, email_service, reelstats_api, brand_router=brand_router,
+)
+webhook_handler = WebhookHandler(
+    bolt_app.client, scheduler_service, brand_router=brand_router,
+)
 
 # ---------------------------------------------------------------------------
 # Register Slack Handlers
@@ -117,7 +123,10 @@ def slack_install(brand: str = None):
         logger.error("Slack OAuth not configured: %s", exc)
         return jsonify({"error": str(exc)}), 500
 
-    url = generator.build_install_url(brand=brand)
+    # Normalize the brand slug so the install record matches the slug derived
+    # from campaign brandName at notification time (see services/brand_router).
+    normalized_brand = slugify_brand(brand) if brand else None
+    url = generator.build_install_url(brand=normalized_brand)
     # 302 so a browser following the link lands on Slack's consent page.
     return "", 302, {"Location": url}
 

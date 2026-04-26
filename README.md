@@ -219,35 +219,56 @@ SLACK_OAUTH_SCOPES=chat:write,channels:read,commands,incoming-webhook,users:read
 
 ### 2. Generate a per-brand link
 
-Either use the CLI…
+The brand slug must match the campaign's `brandName` in ReelStats once
+slugified (lowercase, alphanumerics only). Use the CLI — it handles the
+slugification for you:
 
 ```bash
-# Direct Slack URL (signed state embeds the brand; link expires after 10 min)
-python generate_install_link.py acme
+# Pass the brand name exactly as it appears in ReelStats. The CLI lowercases
+# and strips punctuation/spaces before embedding it. "Acme Inc" -> "acmeinc".
+python generate_install_link.py "Acme Inc" --public-url https://your-domain
+# -> https://your-domain/slack/install/acmeinc
 
-# Stable shareable URL routed through this app (no expiry — the signed state
-# is minted at request time)
-python generate_install_link.py acme --public-url https://your-domain
-# -> https://your-domain/slack/install/acme
+# Direct Slack URL (signed state, link expires after 10 min)
+python generate_install_link.py "Acme Inc"
 ```
 
-…or just share the app route directly:
+…or share the app route directly using the slug yourself:
 
 ```
-https://your-domain/slack/install/<brand-slug>
+https://your-domain/slack/install/acmeinc
 ```
 
 Hitting that route 302s the brand to Slack's consent screen.
 
 ### 3. Flow the brand sees
 
-1. Brand opens `https://your-domain/slack/install/acme`
+1. Brand opens `https://your-domain/slack/install/acmeinc`
 2. Slack shows the app's consent screen; brand picks a channel + clicks Allow
 3. Slack redirects back to `/slack/oauth_redirect` with `?code=...&state=...`
 4. The bot exchanges the code for a bot token and saves a row in
    `slack_installations` containing `team_id`, `bot_token`, `channel_id`,
-   `channel_name`, and `webhook_url`. From then on the bot uses that token +
-   channel when posting on that brand's behalf.
+   `channel_name`, and `webhook_url`.
+
+### What the brand actually receives
+
+After install, the bot automatically routes these three brand-facing
+notifications to the brand's chosen channel — no manual setup required:
+
+| Notification | Trigger |
+|---|---|
+| **Milestone alerts** (250K, 500K, 1M views, etc.) | Polling / `views_updated` webhook |
+| **Review submitted** (creator submitted a video for review) | `review_submitted` webhook |
+| **Content uploaded** (creator posted the final video) | `video_links_submitted` webhook |
+
+Routing is keyed on `slugify(campaign.brandName) == slack_installations.brand`
+(see `services/brand_router.py`). If no install record matches, the
+notification falls back to the team's existing channel (`SLACK_CHANNEL_*`),
+so internal alerts keep flowing while brands are being onboarded.
+
+Internal-only notifications (deadline reminders, payment summaries, deliverable
+flags) continue to post to the team channels and are *not* sent to brand
+workspaces.
 
 ### Endpoints added
 

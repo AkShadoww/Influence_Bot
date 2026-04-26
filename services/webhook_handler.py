@@ -28,9 +28,15 @@ logger = logging.getLogger(__name__)
 
 
 class WebhookHandler:
-    def __init__(self, slack_client: WebClient, scheduler_service=None):
+    def __init__(
+        self,
+        slack_client: WebClient,
+        scheduler_service=None,
+        brand_router=None,
+    ):
         self.client = slack_client
         self.scheduler = scheduler_service
+        self.brand_router = brand_router
         if not Config.SLACK_BOT_TOKEN:
             logger.error(
                 "SLACK_BOT_TOKEN is not set — webhook notifications will fail. "
@@ -38,29 +44,44 @@ class WebhookHandler:
             )
 
     def _post_to_slack(
-        self, channel: str, text: str, blocks: list[dict], event_label: str
+        self,
+        channel: str,
+        text: str,
+        blocks: list[dict],
+        event_label: str,
+        brand: str | None = None,
     ) -> tuple[bool, str | None, str | None]:
         """
         Post a message to Slack and return (ok, resolved_channel_id, ts).
-        Channel id and ts are needed by callers that want to match future
-        thread replies back to the posted message.
+
+        If `brand` is given and that brand has a SlackInstallation row, the
+        post goes to that workspace's bot token + chosen channel. Otherwise
+        it falls back to the team's default client + the given `channel`.
         """
-        if not channel:
+        if self.brand_router is not None:
+            route = self.brand_router.resolve(brand, channel)
+            client = route.client
+            target_channel = route.channel
+        else:
+            client = self.client
+            target_channel = channel
+
+        if not target_channel:
             logger.error(
                 f"Cannot post {event_label}: target channel is not configured."
             )
             return False, None, None
 
         try:
-            response = self.client.chat_postMessage(
-                channel=channel,
+            response = client.chat_postMessage(
+                channel=target_channel,
                 text=text,
                 blocks=blocks,
             )
             if not response.get("ok"):
                 logger.error(
                     f"Slack API returned non-ok for {event_label} "
-                    f"(channel={channel}): {response.data}"
+                    f"(channel={target_channel}): {response.data}"
                 )
                 return False, None, None
             return True, response.get("channel"), response.get("ts")
@@ -68,7 +89,7 @@ class WebhookHandler:
             err = e.response.get("error") if e.response else str(e)
             logger.error(
                 f"Slack API error posting {event_label} to channel "
-                f"{channel}: {err}"
+                f"{target_channel}: {err}"
             )
             return False, None, None
 
@@ -159,6 +180,7 @@ class WebhookHandler:
                 text=f"New review submitted by @{username} for {campaign_name}",
                 blocks=blocks,
                 event_label="review_submitted",
+                brand=brand_name,
             )
 
             if ok and ts:
@@ -207,10 +229,12 @@ class WebhookHandler:
                     f"{campaign_name} contains no platform URLs"
                 )
 
+            brand_name = campaign.get("brandName") or campaign.get("brand_name") or ""
+
             blocks = build_video_links_submitted_blocks(
                 creator_username=username,
                 campaign_name=campaign_name,
-                brand_name=campaign.get("brandName") or campaign.get("brand_name") or "",
+                brand_name=brand_name,
                 video_title=video.get("title", ""),
                 links=links,
             )
@@ -220,6 +244,7 @@ class WebhookHandler:
                 text=f"Video links submitted by @{username} for {campaign_name}",
                 blocks=blocks,
                 event_label="video_links_submitted",
+                brand=brand_name,
             )
             if ok:
                 logger.info(

@@ -23,6 +23,7 @@ from models.models import (
     DeliverableAlert,
     DeadlineReminder,
     UploadFollowup,
+    PaymentRecord,
 )
 from services.reelstats_api import ReelStatsAPI
 from services.email_service import EmailService, EmailSendResult
@@ -436,7 +437,7 @@ class SchedulerService:
     # Daily Payment Summary
     # ------------------------------------------------------------------
     def send_payment_summary(self):
-        """Daily summary of all creators with completed deliverables."""
+        """Daily summary of creators with completed deliverables not yet marked as paid."""
         creators = self.api.get_all_creators()
         completed = [
             c for c in creators
@@ -450,13 +451,35 @@ class SchedulerService:
             )
             return
 
-        blocks = build_payment_summary_blocks(completed)
+        # Exclude creators already marked as paid.
+        db = SessionLocal()
+        try:
+            paid_pairs = {
+                (r.campaign_id, r.creator_username)
+                for r in db.query(PaymentRecord).all()
+            }
+        finally:
+            db.close()
+
+        pending = [
+            c for c in completed
+            if (c.get("campaign_id", ""), c.get("username", "")) not in paid_pairs
+        ]
+
+        if not pending:
+            self.client.chat_postMessage(
+                channel=Config.SLACK_CHANNEL_PAYMENTS,
+                text=":sunrise: *Daily Payment Summary*\nAll creators with completed deliverables have already been marked as paid.",
+            )
+            return
+
+        blocks = build_payment_summary_blocks(pending)
         self.client.chat_postMessage(
             channel=Config.SLACK_CHANNEL_PAYMENTS,
-            text=f"Daily Payment Summary: {len(completed)} creator(s) ready for payment",
+            text=f"Daily Payment Summary: {len(pending)} creator(s) ready for payment",
             blocks=blocks,
         )
-        logger.info(f"Payment summary sent: {len(completed)} creators")
+        logger.info(f"Payment summary sent: {len(pending)} creators")
 
 
 def _format_views(count: int) -> str:

@@ -262,6 +262,82 @@ def build_deadline_reminder_blocks(
     return blocks
 
 
+_DEADLINE_SOURCE_LABELS = {
+    "bot": "a creator reply",
+    "admin": "the dashboard",
+    "deal-studio": "Deal Studio",
+}
+
+
+def build_deadline_changed_blocks(
+    creator_username: str,
+    campaign_name: str,
+    brand_name: str,
+    previous_deadline: str | None,
+    new_deadline: str | None,
+    source: str = "admin",
+    actor: str | None = None,
+    reason: str | None = None,
+    ladder_reset: bool = False,
+) -> list[dict]:
+    """
+    A creator's deadline moved — who moved it, from what to what, and why.
+
+    The campaigns dashboard owns the date and fires this for every writer, so
+    this is the one place the team sees a deadline move regardless of whether
+    it came from an admin editing the row, a signed contract landing, or a
+    creator agreeing a new date in chat.
+    """
+    origin = _DEADLINE_SOURCE_LABELS.get(source, source)
+    fields = [
+        {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+        {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name}"},
+        {"type": "mrkdwn", "text": f"*Was:*\n{previous_deadline or '—'}"},
+        {"type": "mrkdwn", "text": f"*Now:*\n{new_deadline or '—'}"},
+    ]
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": ":calendar: Deadline Changed"},
+        },
+        {"type": "section", "fields": fields},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"Moved via *{origin}*"
+                    + (f" by *{actor}*" if actor else "")
+                    + (f" — {brand_name}" if brand_name else "")
+                    + "."
+                ),
+            },
+        },
+    ]
+
+    if reason:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"> {reason}"},
+        })
+
+    if ladder_reset:
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": (
+                    ":arrows_counterclockwise: Chase reminders reset for the new "
+                    "date — any snooze or stop on this creator has been lifted."
+                ),
+            }],
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
+
+
 def build_upload_followup_blocks(
     creator_username: str,
     campaign_name: str,

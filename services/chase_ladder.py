@@ -264,6 +264,78 @@ def set_state(
         db.close()
 
 
+def reset_for_new_deadline(campaign_id: str, creator_username: str) -> int:
+    """
+    Wipe the ladder's memory for one creator so a new deadline gets a real
+    chase. Returns how many rows were cleared.
+
+    Without this a moved deadline is a dead one. Every rung is deduped by
+    ``deadline_<rung>`` in ``email_log`` and by ``reminder_type`` in
+    ``deadline_reminders``, and those rows say nothing about *which* deadline
+    they were sent for. So a creator chased to the second rung, who then
+    agrees a new date, would sail past that date in silence — the rows from
+    the old one still read as "already sent".
+
+    The brake is released too. A team member who stopped the chase and a
+    creator who has just committed to a new date are two strong signals
+    pointing opposite ways, and the newer one wins: agreeing a date puts them
+    back in play. The Slack notice says so, so nobody is surprised by it.
+    """
+    from models.models import DeadlineReminder, EmailLog
+
+    db = SessionLocal()
+    cleared = 0
+    try:
+        cleared += (
+            db.query(DeadlineReminder)
+            .filter_by(campaign_id=campaign_id, creator_username=creator_username)
+            .delete()
+        )
+        cleared += (
+            db.query(EmailLog)
+            .filter(
+                EmailLog.campaign_id == campaign_id,
+                EmailLog.creator_username == creator_username,
+                EmailLog.template_type.like("deadline_%"),
+            )
+            .delete(synchronize_session=False)
+        )
+        state = (
+            db.query(ChaseState)
+            .filter_by(campaign_id=campaign_id, creator_username=creator_username)
+            .first()
+        )
+        if state is not None:
+            # Releasing the brake counts as something cleared in its own
+            # right. A creator the team explicitly stopped chasing may have no
+            # rung rows at all, and reporting "nothing reset" there would hide
+            # the one part of this they most need to know about.
+            released = (
+                state.status != "active"
+                or state.snoozed_until is not None
+                or (state.held_days or 0) != 0
+                or state.held_last_date is not None
+            )
+            if released:
+                cleared += 1
+                state.status = "active"
+                state.snoozed_until = None
+                state.held_days = 0
+                state.held_last_date = None
+                state.reason = "reset — deadline changed"
+        db.commit()
+        return cleared
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Failed to reset the chase ladder for @%s on %s",
+            creator_username, campaign_id,
+        )
+        return 0
+    finally:
+        db.close()
+
+
 def _hold_clock(campaign_id: str, creator_username: str, today: date) -> int:
     """
     Charge one held day to this creator, at most once per calendar day, and

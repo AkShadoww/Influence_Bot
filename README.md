@@ -8,7 +8,7 @@ INFLUENCE Bot automates the entire creator-brand content workflow:
 
 1. **Video Review & Approval** — Creators submit draft videos via Tally. The bot sends them to brand POCs on Slack with Approve / Request Changes buttons. Decisions trigger automatic emails to creators.
 
-2. **Automated Follow-Up Emails** — When a creator misses their posting deadline, the bot sends escalating follow-up emails (friendly reminder -> second nudge -> urgent notice) from `jennifer@useinfluence.xyz`.
+2. **The post-deadline chase** — When a creator misses their posting deadline, the bot works a four-rung ladder from `jennifer@useinfluence.xyz`: an overdue notice at D+1, a nudge naming the shortfall at D+3, a final notice at D+7, and at D+10 it stops emailing and hands the creator to the team in Slack. Every rung carries a link into the creator's campaign chat, and every Slack alert carries Snooze / Stop buttons so a person can halt the ladder.
 
 3. **Team Notifications & Alerts** — Real-time Slack alerts for new campaigns, video submissions, approvals, overdue deadlines, and daily campaign summaries every morning at 9 AM.
 
@@ -178,6 +178,10 @@ supported server.
    | `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | e.g. `jennifer@useinfluence.xyz` / `Jennifer - INFLUENCE` *(optional; sensible defaults)* |
    | `DATABASE_URL` | `sqlite:////data/influence_bot.db` *(four slashes)* |
    | `POLL_INTERVAL_SECONDS` | `60` *(optional)* |
+   | `CHASE_TIMEZONE` | `America/Los_Angeles` *(optional)* — the zone every "today" in the deadline ladder is read in. Deadlines are bare calendar dates worked to by US creators; on a UTC host the two disagree for the last seven hours of every day, which marks a Californian creator overdue while it is still their deadline afternoon |
+   | `CHASE_SEND_HOUR_START` / `CHASE_SEND_HOUR_END` | `9` / `17` *(optional)* — chase rungs only send inside these hours, local to `CHASE_TIMEZONE`. The poll ticks every minute, so without a window a final notice arrives at 12:01am |
+   | `CHASE_RUNG_DAYS` | `1,3,7,10` *(optional)* — days past the deadline each of the four rungs is due on. A malformed value logs an error and falls back to the default rather than taking the chase down |
+   | `CHASE_ACTIVITY_SNOOZE_DAYS` | `3` *(optional)* — a creator who shared a draft or logged a post this recently is already moving, so the ladder holds |
    | `TEST_CAMPAIGN_NAME` | `Dummy testing` *(optional, while testing)* |
 
    Railway also injects `PORT` automatically — don't set it yourself.
@@ -291,7 +295,15 @@ Hitting that route 302s the brand to Slack's consent screen.
 
 - **Poll-loop checks** — Every `POLL_INTERVAL_SECONDS` (default 60s) the bot re-fetches `GET /api/bot/campaigns` and runs milestone, deliverables-complete, deadline, and upload-follow-up checks (idempotent via per-alert dedup tables)
 - **Daily summary at 9 AM** — Posts a payment-readiness overview to the payments channel
-- **Escalating deadline reminders** — 3 days before -> 1 day before -> overdue, via Slack + email
+- **Escalating deadline reminders** — 3 days before -> 1 day before, via Slack + email
+- **The post-deadline chase ladder** — four rungs at D+1, D+3, D+7 and D+10 (`CHASE_RUNG_DAYS`), then a hard stop. The first keeps the old `overdue` name so anyone mid-chase isn't re-emailed when it ships. Rules that decide whether a rung actually goes out live in `services/chase_ladder.py`:
+  - **Highest due rung only** — a creator already 30 days late the day this deploys gets one final notice, not four emails in a minute
+  - **The clock holds while the brand has the ball** — days where the creator's drafts sit unanswered aren't counted, so brand silence can't march a creator to a final notice for work that isn't theirs
+  - **Never chased for views** — a creator whose videos are all live and who is only short on `minViews` gets no email; views accrue on their own
+  - **Recent activity pauses it** — a draft or a live post in the last `CHASE_ACTIVITY_SNOOZE_DAYS` days
+  - **US calendar** — "today" is read in `CHASE_TIMEZONE` (default `America/Los_Angeles`), rungs only send between `CHASE_SEND_HOUR_START` and `CHASE_SEND_HOUR_END`, and a rung landing on a weekend slides to the next working day
+- **The chase brake** — Snooze 3d / Snooze 7d / Stop chasing buttons on every post-deadline Slack alert. Resend only sends, so a creator replying by email lands in a human inbox the bot can't read; whoever reads that reply is already in `#creator-deadlines` and can halt the ladder in one click
+- **Deadline changes are announced** — the campaigns dashboard fires `deadline_changed` whenever a stored deadline moves, whoever moved it (an admin, a signed contract, or a revision the bot wrote back). The bot posts it to `#creator-deadlines` and **resets the ladder** for the new date — rung dedup rows don't record which deadline they were sent for, so without the reset a creator who agrees a new date would sail past it in silence
 - **Reminder emails skip creators waiting on review** — the nag email is held when the videos a creator has already shared for review cover the deliverables they still owe (counted, so 1 video shared against 2 still owed still emails; a draft sent back with "Request Changes" or marked as ignored doesn't count, and an unmet view target needs at least one video still in the pipeline). The Slack alert still posts, annotated with why no email went out
 - **Real-time webhook alerts** — Review submissions, video-link submissions, approvals (poll is the safety-net fallback)
 - **24h review auto-approval** — Sweeps every 30 min to auto-approve reviews left un-actioned for 24h. A chat message from someone other than the creator (brand or INFLUENCE) means the review is being worked and stops the clock; the creator's own messages don't. Each draft gets its own clock, so feedback on an earlier draft doesn't keep a later one from auto-approving

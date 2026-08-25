@@ -4,7 +4,7 @@ Handles button clicks on notification messages.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 
@@ -13,7 +13,7 @@ from models.models import (
     ReviewSubmission,
     SessionLocal,
 )
-from services import chat_service, review_ignore, review_messages
+from services import chase_ladder, chat_service, review_ignore, review_messages
 from services.review_approval import approve_review_core
 from templates.slack_blocks import (
     build_review_closed_context_block,
@@ -442,6 +442,82 @@ def register_actions(app):
     # is only rendered on the admin copy of the message
     # (`include_ignore=True`), so a brand never sees it.
     # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # The chase brake
+    # ---------------------------------------------------------------
+    # Resend only sends. A creator who replies to a chase lands in a human
+    # inbox the bot cannot read, so without a brake the ladder keeps climbing
+    # past someone who already answered. These buttons are that brake, and
+    # the person reading the reply is already in this channel.
+
+    def _chase_target(action) -> tuple[str, str] | None:
+        """Unpack "campaign_id|creator_username" from a brake button."""
+        raw = action.get("value") or ""
+        campaign_id, _, creator_username = raw.partition("|")
+        if not campaign_id or not creator_username:
+            logger.warning("Chase brake clicked with unusable value %r", raw)
+            return None
+        return campaign_id, creator_username
+
+    def _apply_chase_brake(body, respond, *, status, days=None):
+        user = body.get("user", {})
+        actor_id = user.get("id", "")
+        actor_name = user.get("username") or user.get("name") or actor_id
+
+        target = _chase_target((body.get("actions") or [{}])[0])
+        if target is None:
+            return
+        campaign_id, creator_username = target
+
+        until = None
+        if days:
+            until = chase_ladder.today_local() + timedelta(days=days)
+
+        chase_ladder.set_state(
+            campaign_id,
+            creator_username,
+            status=status,
+            snoozed_until=until,
+            set_by=actor_id,
+            reason=f"{status} by @{actor_name} in Slack",
+        )
+
+        if status == "stopped":
+            note = (
+                f":octagonal_sign: Chase stopped for *@{creator_username}* by "
+                f"<@{actor_id}> ({_utc_stamp()}). No further deadline emails "
+                "will go out for this campaign."
+            )
+        else:
+            note = (
+                f":zzz: Chase snoozed for *@{creator_username}* by <@{actor_id}> "
+                f"until *{until}* ({_utc_stamp()})."
+            )
+
+        # Posted into the thread rather than replacing the alert: the rung
+        # that prompted the click stays readable above it, and a later
+        # Stop after a Snooze reads as the sequence it was.
+        respond(text=note, response_type="in_channel", replace_original=False)
+        logger.info(
+            "Chase %s for @%s on %s by %s", status, creator_username,
+            campaign_id, actor_name,
+        )
+
+    @app.action("chase_snooze_3d")
+    def handle_chase_snooze_3d(ack, body, client, respond):
+        ack()
+        _apply_chase_brake(body, respond, status="snoozed", days=3)
+
+    @app.action("chase_snooze_7d")
+    def handle_chase_snooze_7d(ack, body, client, respond):
+        ack()
+        _apply_chase_brake(body, respond, status="snoozed", days=7)
+
+    @app.action("chase_stop")
+    def handle_chase_stop(ack, body, client, respond):
+        ack()
+        _apply_chase_brake(body, respond, status="stopped")
+
     @app.action("review_ignore")
     def handle_review_ignore(ack, body, client, respond):
         ack()

@@ -130,6 +130,23 @@ def build_deliverable_complete_blocks(
     ]
 
 
+def _chase_value(campaign_id: str, creator_username: str) -> str:
+    """Encode the identifiers the chase brake handlers need."""
+    return f"{campaign_id}|{creator_username}"
+
+
+# Headline and tone per rung. The pre-deadline tiers are reminders; the
+# post-deadline ones escalate, and the last hands over to a person.
+_RUNG_PRESENTATION = {
+    "overdue": (":red_circle:", "Deadline Overdue"),
+    "overdue_2": (":large_orange_circle:", "Still Overdue — Second Notice"),
+    "overdue_3": (":rotating_light:", "Final Notice Sent"),
+    "overdue_final": (":no_bell:", "Automated Chase Exhausted"),
+    "1_day": (":warning:", "Deadline Tomorrow!"),
+    "3_days": (":calendar:", "Deadline Approaching"),
+}
+
+
 def build_deadline_reminder_blocks(
     creator_username: str,
     campaign_name: str,
@@ -138,25 +155,38 @@ def build_deadline_reminder_blocks(
     reminder_type: str,
     days_left: int,
     email_note: str | None = None,
+    campaign_id: str = "",
+    days_overdue: int | None = None,
+    chat_url: str | None = None,
+    emailed: bool = True,
 ) -> list[dict]:
     """
-    Deadline reminder — 3 days, 1 day, or overdue.
+    One rung of the deadline ladder, as the team sees it in Slack.
 
-    `email_note` explains why the creator wasn't emailed (their videos in
-    review already cover what's outstanding), so the team chases the
-    review rather than the creator.
+    `email_note` explains why the creator wasn't emailed — their videos in
+    review already cover what's outstanding, the shortfall is views they
+    can't act on, or this is the final rung, which never emails. The team
+    reads it to know whether to chase the creator, the brand, or neither.
+
+    Post-deadline rungs carry the brake: Snooze parks the ladder for a few
+    days when someone has replied outside the system, Stop ends it for good.
+    Without them a four-rung ladder cannot be halted between polls.
     """
-    if reminder_type == "overdue":
-        emoji = ":red_circle:"
-        title = "Deadline Overdue!"
-        status_text = f"The deadline was *{deadline}* — now *{abs(days_left)} day(s) overdue*."
+    emoji, title = _RUNG_PRESENTATION.get(reminder_type, (":calendar:", "Deadline"))
+    is_post_deadline = reminder_type.startswith("overdue")
+    late = days_overdue if days_overdue is not None else abs(days_left)
+
+    if reminder_type == "overdue_final":
+        status_text = (
+            f"The deadline was *{deadline}* — now *{late} day(s) overdue*. "
+            "Three emails have gone out and the automated chase stops here. "
+            "*This one needs a person.*"
+        )
+    elif is_post_deadline:
+        status_text = f"The deadline was *{deadline}* — now *{late} day(s) overdue*."
     elif reminder_type == "1_day":
-        emoji = ":warning:"
-        title = "Deadline Tomorrow!"
         status_text = f"The deadline is *{deadline}* — *1 day remaining*."
     else:
-        emoji = ":calendar:"
-        title = "Deadline Approaching"
         status_text = f"The deadline is *{deadline}* — *{days_left} days remaining*."
 
     blocks = [
@@ -181,11 +211,53 @@ def build_deadline_reminder_blocks(
             "text": {"type": "mrkdwn", "text": status_text},
         },
     ]
+
     if email_note:
         blocks.append({
             "type": "context",
             "elements": [{"type": "mrkdwn", "text": f":mailbox_with_no_mail: {email_note}"}],
         })
+    elif emailed and is_post_deadline and reminder_type != "overdue_final":
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": ":outbox_tray: Creator emailed."}],
+        })
+
+    if is_post_deadline and campaign_id:
+        elements = [
+            {
+                "type": "button",
+                "action_id": "chase_snooze_3d",
+                "text": {"type": "plain_text", "text": ":zzz: Snooze 3d"},
+                "value": _chase_value(campaign_id, creator_username),
+            },
+            {
+                "type": "button",
+                "action_id": "chase_snooze_7d",
+                "text": {"type": "plain_text", "text": ":zzz: Snooze 7d"},
+                "value": _chase_value(campaign_id, creator_username),
+            },
+            {
+                "type": "button",
+                "action_id": "chase_stop",
+                "style": "danger",
+                "text": {"type": "plain_text", "text": ":octagonal_sign: Stop chasing"},
+                "value": _chase_value(campaign_id, creator_username),
+            },
+        ]
+        if chat_url:
+            # Plain link button (no action_id) — it only navigates.
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":speech_balloon: Open chat"},
+                "url": chat_url,
+            })
+        blocks.append({
+            "type": "actions",
+            "block_id": f"chase_actions_{campaign_id}_{creator_username}",
+            "elements": elements,
+        })
+
     blocks.append({"type": "divider"})
     return blocks
 

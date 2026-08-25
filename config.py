@@ -106,6 +106,29 @@ class Config:
     else:
         POLL_INTERVAL_SECONDS = 60
 
+    # --- Post-deadline chase ladder ---
+    # Deadlines are calendar dates with no zone attached ("2026-08-24"), and
+    # the creators working to them are in the US. Comparing such a date to a
+    # UTC server clock marks a Californian creator overdue at 5pm on the day
+    # it is still due, so the whole ladder reads "today" in this zone instead.
+    # Pacific is deliberate: it is the latest continental US zone, so nobody
+    # is ever chased while it is still their deadline day anywhere in the
+    # country.
+    CHASE_TIMEZONE = os.environ.get("CHASE_TIMEZONE", "America/Los_Angeles")
+    # Days past the deadline each rung is due on. The poll runs every minute,
+    # so without a send window a final notice lands at 12:01am; rungs only go
+    # out between these hours, local to CHASE_TIMEZONE.
+    CHASE_SEND_HOUR_START = int(os.environ.get("CHASE_SEND_HOUR_START", "9"))
+    CHASE_SEND_HOUR_END = int(os.environ.get("CHASE_SEND_HOUR_END", "17"))
+    # Comma-separated day offsets for the four rungs, in order. Config rather
+    # than constants so the cadence is tuned from Railway, not a deploy.
+    CHASE_RUNG_DAYS = os.environ.get("CHASE_RUNG_DAYS", "1,3,7,10")
+    # A creator who submitted a draft or logged a post this recently is
+    # already moving; the ladder holds rather than nagging them.
+    CHASE_ACTIVITY_SNOOZE_DAYS = int(
+        os.environ.get("CHASE_ACTIVITY_SNOOZE_DAYS", "3")
+    )
+
     # --- Creator <-> Brand chat spaces ---
     # Public base URL the bot is reachable at (used to build magic links sent
     # to creators by email and brand "Open Chat Space" buttons in Slack).

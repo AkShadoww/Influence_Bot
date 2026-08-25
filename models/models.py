@@ -15,6 +15,7 @@ from sqlalchemy import (
     BigInteger,
     String,
     Text,
+    Date,
     DateTime,
     Boolean,
     ForeignKey,
@@ -413,6 +414,62 @@ class UploadFollowup(Base):
         UniqueConstraint(
             "campaign_id", "creator_username",
             name="uq_upload_followup",
+        ),
+    )
+
+
+class ChaseState(Base):
+    """
+    Whether the post-deadline chase ladder is running for one creator on one
+    campaign, and how far its clock has been held.
+
+    Three things live here, all of which have to survive a restart:
+
+    ``status`` is the brake. A human hits Snooze or Stop on the Slack alert
+    and the ladder stops firing — snoozed until a date, stopped until someone
+    puts it back. Without a durable brake a four-rung ladder is worse than the
+    single email it replaces, because nothing can halt it mid-flight.
+
+    ``held_days`` is the clock hold. While the creator's drafts sit unanswered
+    with the brand, the ladder must not march them toward a final notice for
+    something that is not their move. Each held day increments this counter,
+    and the rung due today is computed from ``days_overdue - held_days``.
+    ``held_last_date`` makes that increment idempotent against a 60-second
+    poll: the counter moves once per calendar day, not once per tick.
+
+    Absence of a row means an unheld, running ladder — the common case — so
+    nothing has to be written until something actually pauses.
+    """
+
+    __tablename__ = "chase_states"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+
+    # active | snoozed | stopped
+    status = Column(String(20), nullable=False, default="active")
+    # Set with status="snoozed": the ladder resumes the day after this date.
+    snoozed_until = Column(Date, nullable=True)
+
+    # Days the clock has been held because the ball was with the brand.
+    held_days = Column(Integer, nullable=False, default=0)
+    # Guards the increment above against repeat polls on the same day.
+    held_last_date = Column(Date, nullable=True)
+
+    # Who last moved the brake (Slack user id) and why, for the audit trail
+    # in the channel.
+    set_by = Column(String(255), nullable=True)
+    reason = Column(Text, nullable=True)
+
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "creator_username", name="uq_chase_state",
         ),
     )
 

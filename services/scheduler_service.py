@@ -29,6 +29,7 @@ from models.models import (
 )
 from services import chase_ladder
 from services import chat_notifications
+from services import inbound_replies
 from services.brand_routing import post_to_brand_workspace
 from services.reelstats_api import ReelStatsAPI
 from services.email_service import EmailService, EmailSendResult
@@ -675,6 +676,11 @@ class SchedulerService:
                 template_type=f"deadline_{rung}",
                 campaign_id=campaign_id,
                 creator_username=username,
+                # A per-chase Reply-To, so a creator who hits reply lands
+                # somewhere the bot can read. None until inbound handling is
+                # switched on, in which case the default reply-to applies and
+                # nothing changes.
+                reply_to=inbound_replies.reply_address_for(campaign_id, username),
             )
         elif email_note:
             logger.info(

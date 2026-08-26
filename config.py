@@ -129,6 +129,34 @@ class Config:
         os.environ.get("CHASE_ACTIVITY_SNOOZE_DAYS", "3")
     )
 
+    # --- Inbound creator replies ---
+    # Resend only sends; a creator who replies to a chase lands in a human
+    # inbox the bot never reads, and the ladder keeps climbing past someone
+    # who already answered. Turning this on gives each chase email a
+    # per-chase Reply-To so replies come back here and can be acted on.
+    #
+    # Off by default: it moves Reply-To away from the human inbox, so it
+    # should only go on once the inbound domain is actually routing.
+    CHASE_INBOUND_ENABLED = (
+        os.environ.get("CHASE_INBOUND_ENABLED", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    # Domain the per-chase Reply-To addresses live on. Must be configured as
+    # a receiving domain in Resend, pointed at POST /webhook/resend.
+    CHASE_REPLY_DOMAIN = os.environ.get(
+        "CHASE_REPLY_DOMAIN", "reply.useinfluence.xyz"
+    )
+    # Signing secret for the Resend webhook (Svix scheme, "whsec_…"). Without
+    # it the inbound route refuses every request rather than trusting unsigned
+    # input — this path can move a contracted deadline.
+    RESEND_WEBHOOK_SECRET = os.environ.get("RESEND_WEBHOOK_SECRET")
+    # The inbound webhook carries metadata only; the body is fetched from the
+    # receiving API by email id. Configurable because the path is the one part
+    # of this integration most likely to move.
+    RESEND_RECEIVING_API_URL = os.environ.get(
+        "RESEND_RECEIVING_API_URL", "https://api.resend.com/emails/receiving"
+    )
+
     # --- Creator <-> Brand chat spaces ---
     # Public base URL the bot is reachable at (used to build magic links sent
     # to creators by email and brand "Open Chat Space" buttons in Slack).

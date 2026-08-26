@@ -69,6 +69,60 @@ class ReelStatsAPI:
             logger.error(f"Failed to fetch campaigns from ReelStats API: {e}")
             return []
 
+    def update_deadline(
+        self,
+        *,
+        campaign_id: str,
+        username: str,
+        deadline: str,
+        reason: str = "",
+        actor: str = "",
+    ) -> tuple[bool, str]:
+        """
+        Write a deadline a creator agreed to back to the campaigns dashboard.
+
+        The dashboard owns the date, so a revision that only lived here would
+        leave the admin row showing a deadline nobody is working to. Returns
+        (ok, message) — the message is what the team sees in Slack, so a
+        refusal from the dashboard's own guards (a date in the past, one too
+        far out) is surfaced rather than swallowed.
+        """
+        url = f"{self.base_url}/api/bot/creators/deadline"
+        payload = {
+            "campaignId": campaign_id,
+            "username": username,
+            "deadline": deadline,
+            "reason": reason or None,
+            "actor": actor or None,
+        }
+        try:
+            resp = self.session.post(url, json=payload, timeout=20)
+        except requests.RequestException as exc:
+            logger.error("Deadline write-back unreachable for @%s: %s", username, exc)
+            return False, "Could not reach the campaigns dashboard."
+
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+            except ValueError:
+                body = {}
+            previous = body.get("previousDeadline") or "—"
+            logger.info(
+                "Deadline for @%s on %s moved %s -> %s",
+                username, campaign_id, previous, deadline,
+            )
+            return True, f"Deadline moved from {previous} to {deadline}."
+
+        try:
+            error = resp.json().get("error") or resp.text
+        except ValueError:
+            error = resp.text
+        logger.warning(
+            "Deadline write-back refused for @%s (HTTP %s): %s",
+            username, resp.status_code, error,
+        )
+        return False, f"The dashboard refused it: {error}"
+
     def get_all_creators(self) -> list[dict]:
         """
         Fetch all campaigns and flatten into a list of creator dicts,

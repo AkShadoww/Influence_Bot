@@ -474,6 +474,38 @@ class ChaseState(Base):
     )
 
 
+class ChaseReplyAddress(Base):
+    """
+    A short, opaque token identifying the (campaign, creator) a chase email
+    was sent about, used as the Reply-To local part:
+    ``chase+<token>@<CHASE_REPLY_DOMAIN>``.
+
+    Inbound replies have to be attributed to a specific chase, and the
+    ``From:`` address is a poor way to do it — creators change email
+    addresses, several creators can share one, and the same creator can be
+    running two campaigns at once, each with its own deadline. Routing on a
+    per-chase address makes the attribution exact.
+
+    A stored token rather than a signed blob because an email local part is
+    limited to 64 characters and a signed payload does not reliably fit. A
+    row also lets an address be revoked, which a signature cannot be.
+    """
+
+    __tablename__ = "chase_reply_addresses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    campaign_id = Column(String(255), nullable=False)
+    creator_username = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "creator_username", name="uq_chase_reply_address",
+        ),
+    )
+
+
 class ReviewSubmission(Base):
     """
     One row per review_submitted webhook. Stores context needed to respond to

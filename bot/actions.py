@@ -66,6 +66,24 @@ def _mark_brand_review_approved(review_id: int, creator_username: str) -> None:
     )
 
 
+_reelstats_api = None
+
+
+def reelstats_api_singleton():
+    """
+    One ReelStatsAPI for the action handlers.
+
+    Built lazily rather than at import: this module is imported during app
+    construction, before Config has necessarily been read, and a handler only
+    needs the client when someone actually clicks.
+    """
+    global _reelstats_api
+    if _reelstats_api is None:
+        from services.reelstats_api import ReelStatsAPI
+        _reelstats_api = ReelStatsAPI()
+    return _reelstats_api
+
+
 def register_actions(app):
     """Register interactive component handlers on the Bolt app."""
 
@@ -517,6 +535,75 @@ def register_actions(app):
     def handle_chase_stop(ack, body, client, respond):
         ack()
         _apply_chase_brake(body, respond, status="stopped")
+
+    # ---------------------------------------------------------------
+    # Confirming a deadline a creator asked for
+    # ---------------------------------------------------------------
+    # A creator's emailed reply is read by a model and posted here as a
+    # *proposal*. A deadline is a contract term, so nothing reaches the
+    # dashboard until someone presses this button — the authority is the
+    # click, never the classification.
+
+    @app.action("chase_revision_confirm")
+    def handle_chase_revision_confirm(ack, body, client, respond):
+        ack()
+
+        user = body.get("user", {})
+        actor_id = user.get("id", "")
+        actor_name = user.get("username") or user.get("name") or actor_id
+
+        raw = ((body.get("actions") or [{}])[0]).get("value") or ""
+        parts = raw.split("|")
+        if len(parts) != 3 or not all(parts):
+            logger.warning("chase_revision_confirm got an unusable value %r", raw)
+            return
+        campaign_id, creator_username, new_deadline = parts
+
+        ok, message = reelstats_api_singleton().update_deadline(
+            campaign_id=campaign_id,
+            username=creator_username,
+            deadline=new_deadline,
+            reason=f"Creator replied by email; confirmed by @{actor_name}",
+            actor=creator_username,
+        )
+
+        if ok:
+            # The ladder reset and the channel notice both come back through
+            # the dashboard's `deadline_changed` webhook, so there is nothing
+            # to do here but confirm the click.
+            note = (
+                f":white_check_mark: <@{actor_id}> moved *@{creator_username}*'s "
+                f"deadline to *{new_deadline}*. {message}"
+            )
+        else:
+            note = (
+                f":x: Could not move *@{creator_username}*'s deadline to "
+                f"*{new_deadline}*. {message}"
+            )
+        respond(text=note, response_type="in_channel", replace_original=False)
+        logger.info(
+            "Deadline revision %s for @%s by %s",
+            "confirmed" if ok else "refused", creator_username, actor_name,
+        )
+
+    @app.action("chase_revision_dismiss")
+    def handle_chase_revision_dismiss(ack, body, client, respond):
+        ack()
+        user = body.get("user", {})
+        actor_id = user.get("id", "")
+
+        raw = ((body.get("actions") or [{}])[0]).get("value") or ""
+        parts = raw.split("|")
+        creator_username = parts[1] if len(parts) > 1 else "this creator"
+
+        respond(
+            text=(
+                f":x: <@{actor_id}> dismissed the proposed deadline for "
+                f"*@{creator_username}* ({_utc_stamp()}). Nothing was changed."
+            ),
+            response_type="in_channel",
+            replace_original=False,
+        )
 
     @app.action("review_ignore")
     def handle_review_ignore(ack, body, client, respond):

@@ -338,6 +338,148 @@ def build_deadline_changed_blocks(
     return blocks
 
 
+_INTENT_PRESENTATION = {
+    "commits_to_date": (":date:", "Creator committed to a date"),
+    "cannot_deliver": (":warning:", "Creator says they cannot deliver"),
+    "says_already_posted": (":eyes:", "Creator says it is already live"),
+    "asks_a_question": (":question:", "Creator asked a question"),
+    "unclear": (":envelope:", "Creator replied"),
+}
+
+
+def build_inbound_reply_blocks(
+    creator_username: str,
+    campaign_name: str,
+    campaign_id: str,
+    subject: str,
+    body: str,
+    reading: dict | None = None,
+    current_deadline: str | None = None,
+) -> list[dict]:
+    """
+    A creator's emailed reply, and — when they named a date — a *proposal* to
+    move their deadline to it.
+
+    The date is never applied here. A deadline is a contract term, and a model
+    reading an email is not authority to rewrite one; the Confirm button is,
+    because a person pressed it. Without a usable date the reply is still
+    posted, because the whole point is that the team stops missing replies.
+    """
+    reading = reading or {}
+    intent = reading.get("intent") or "unclear"
+    emoji, title = _INTENT_PRESENTATION.get(intent, _INTENT_PRESENTATION["unclear"])
+    proposed = reading.get("proposed_date")
+    confidence = reading.get("confidence")
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"{emoji} {title}"},
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+                {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name or '—'}"},
+                {"type": "mrkdwn", "text": f"*Deadline:*\n{current_deadline or '—'}"},
+                {"type": "mrkdwn", "text": f"*Proposed:*\n{proposed or '—'}"},
+            ],
+        },
+    ]
+
+    if reading.get("summary"):
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{reading['summary']}*"},
+        })
+
+    excerpt = (body or "").strip()
+    if excerpt:
+        if len(excerpt) > 1200:
+            excerpt = excerpt[:1200] + "…"
+        quoted = "\n".join(f"> {line}" for line in excerpt.splitlines())
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": quoted},
+        })
+    else:
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": (
+                    ":grey_question: The message body could not be read — "
+                    "check the inbox directly."
+                ),
+            }],
+        })
+
+    if subject:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f":email: {subject}"}],
+        })
+
+    if proposed and campaign_id:
+        note = "Nothing has changed yet — confirm to move the deadline."
+        if confidence and confidence != "high":
+            note = (
+                f"Read with *{confidence}* confidence — check the message above "
+                "before confirming."
+            )
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f":lock: {note}"}],
+        })
+        blocks.append({
+            "type": "actions",
+            "block_id": f"chase_revision_{campaign_id}_{creator_username}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "chase_revision_confirm",
+                    "style": "primary",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f":white_check_mark: Move deadline to {proposed}",
+                    },
+                    "value": f"{campaign_id}|{creator_username}|{proposed}",
+                },
+                {
+                    "type": "button",
+                    "action_id": "chase_revision_dismiss",
+                    "text": {"type": "plain_text", "text": ":x: Dismiss"},
+                    "value": f"{campaign_id}|{creator_username}|{proposed}",
+                },
+            ],
+        })
+    elif campaign_id:
+        # No date to act on, but the chase should still pause while a person
+        # reads this — otherwise the next rung goes out underneath them.
+        blocks.append({
+            "type": "actions",
+            "block_id": f"chase_reply_{campaign_id}_{creator_username}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "chase_snooze_3d",
+                    "text": {"type": "plain_text", "text": ":zzz: Snooze 3d"},
+                    "value": f"{campaign_id}|{creator_username}",
+                },
+                {
+                    "type": "button",
+                    "action_id": "chase_stop",
+                    "style": "danger",
+                    "text": {"type": "plain_text", "text": ":octagonal_sign: Stop chasing"},
+                    "value": f"{campaign_id}|{creator_username}",
+                },
+            ],
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
+
+
 def build_upload_followup_blocks(
     creator_username: str,
     campaign_name: str,

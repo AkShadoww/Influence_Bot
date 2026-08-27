@@ -7,6 +7,10 @@ The ReelStats server exposes two integration mechanisms for the Slack bot:
 1. **Polling endpoint** — `GET /api/bot/campaigns` returns a full snapshot of all campaigns with computed deliverables status, views, reviews, etc.
 2. **Webhooks** — the server POSTs to a configurable URL when creators submit video links or review videos.
 
+The bot in turn calls out to one service of its own:
+
+3. **Campaign updates** — the bot POSTs each of those events on to the outreach service, which puts it on the creator's WhatsApp. See section 3.
+
 ---
 
 ## Setup
@@ -252,7 +256,106 @@ want to classify the change. The bot runs all four per-creator checks
 
 ---
 
-## 3. Error Responses
+## 3. Outbound: Campaign Updates to Creators (WhatsApp)
+
+Sections 1 and 2 are what the ReelStats server tells this bot. This section
+is the one thing this bot tells someone else.
+
+The events above describe what happened to a creator's content, and until
+now they only ever became a Slack post and an email. The outreach service
+(`Influence-Inc/Outreach_Email_Automation`) can also put them on the
+creator's WhatsApp — it holds the phone numbers, the WhatsApp Business
+credentials and Meta's approved message templates, none of which this bot
+has. So this bot reports **what happened and to whom**, and every decision
+needing data it doesn't have is made on that side: is this creator
+subscribed, is their 24h WhatsApp window open, does this go out now as
+free-form text, as an approved template, or into a queue until they write in.
+
+Implemented in `services/creator_updates.py`.
+
+### `POST {OUTREACH_API_BASE}/api/bot/creator-updates`
+
+**Auth:** `x-bot-token` header must match the outreach service's
+`OUTREACH_BOT_TOKEN`.
+
+```json
+{
+  "event": "review_approved",
+  "creator": { "username": "tharun.fyi", "email": "tharunr16@gmail.com" },
+  "campaign": { "id": "fc6cd16f226f", "name": "Reve Features", "brandName": "Reve" },
+  "data": { "submitPostsUrl": "https://campaign.influence.technology/reve/reve-features/submit-links" },
+  "dedupKey": "review:5721"
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `event` | **Yes** | One of the events below. An unknown name is rejected with a 400 listing the valid ones. |
+| `creator.username` | one of | Instagram handle, with or without a leading `@`. |
+| `creator.email` | one of | Used to match when the handle doesn't. |
+| `campaign` | No | `id` scopes the match to the right campaign row; `brandName` names the brand in the message copy. |
+| `data` | No | Event-specific fields — see the table below. |
+| `dedupKey` | No | The underlying event's own identity. |
+
+**Always pass `dedupKey`.** The ReelStats server fires webhooks AND is polled
+every 60 seconds as a safety net, so the same approval genuinely arrives
+twice. The key is what turns the second one into a no-op instead of a second
+WhatsApp message to the creator. Use whatever identifies the event itself —
+the review row's id, the video id, the chat message id.
+
+### Events
+
+| `event` | Fired when | `data` fields |
+|---|---|---|
+| `review_submitted` | A creator's draft reaches us (`review_submitted` webhook) | — |
+| `review_approved` | The brand approves, by button or the 24h auto-approval sweep | `submitPostsUrl` |
+| `review_feedback` | A brand or INFLUENCE-team message in the review chat space | `feedback` (verbatim), `senderName`, `chatUrl` |
+| `post_submitted` | A live post link lands (`video_links_submitted` webhook) | `postUrl` |
+| `deliverables_complete` | `deliverables.allComplete` flips true | — |
+
+`brief_ready` also exists on the outreach service but originates there, from
+the brief publish — this bot never sends it.
+
+`review_feedback` relays the message body **verbatim**. A paraphrased change
+request is how a re-shoot gets shot wrong.
+
+### Responses
+
+Always `200` with an `outcome` for anything short of a malformed request —
+an unmatched handle and an unsubscribed creator are ordinary results (most
+creators are not on this lane), not failures this bot can act on.
+
+```json
+{ "ok": true, "creatorId": 412, "outcome": "queued" }
+```
+
+| `outcome` | Meaning |
+|---|---|
+| `sent` | Delivered to the creator's WhatsApp. |
+| `queued` | Accepted, but their 24h window is shut and no template covers this kind — it goes out when the window opens. |
+| `duplicate` | This `dedupKey` was already handled. |
+| `no_matching_creator` | No creator row matched the handle/email. |
+| `not_subscribed` | The creator hasn't signed a contract, so the lane isn't open for them. |
+| `opted_out` | The creator replied STOP. |
+
+| Status | Meaning |
+|---|---|
+| `400` | Missing `event`, unknown `event`, or no creator identity |
+| `401` | `OUTREACH_BOT_TOKEN` doesn't match |
+| `503` | `OUTREACH_BOT_TOKEN` isn't set on the outreach service |
+
+### Behaviour
+
+- Fire-and-forget on a background daemon thread, so a slow outreach service
+  never adds seconds to a webhook this bot must answer promptly.
+- Never raises. A campaign update is a courtesy on top of the Slack post and
+  email the caller is already sending; failures are logged and swallowed.
+- A no-op when `OUTREACH_API_BASE` or `OUTREACH_BOT_TOKEN` is unset — the
+  bot then behaves exactly as it did before campaign updates existed.
+
+---
+
+## 4. Error Responses
 
 | Status | Meaning |
 |---|---|

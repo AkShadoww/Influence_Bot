@@ -39,6 +39,7 @@ INFLUENCE Bot
 │   ├── brand_routing.py            # Maps Slack workspaces <-> brands for per-brand notifications
 │   ├── slack_oauth.py              # Per-brand install links + OAuth callback
 │   ├── chat_service.py             # Creator <-> brand chat spaces
+│   ├── creator_updates.py          # Campaign updates -> creators' WhatsApp (via the outreach service)
 │   └── ai_drafts.py                # Claude-drafted reply options for the admin composer
 ├── models/
 │   └── models.py                   # SQLAlchemy models (installs, reviews, dedup + chat tables)
@@ -86,6 +87,7 @@ Creator submits video via Tally
 | **ReelStats API** | Campaign + creator data (polls `GET /api/bot/campaigns`; receives webhooks) | see `BOT_API.md` |
 | **Email (Resend)** | Follow-ups and approval notifications | `jennifer@useinfluence.xyz` |
 | **Campaign Website** | Campaign management + creator submissions | https://campaign.influence.technology |
+| **Outreach service** | Delivers campaign updates to creators on WhatsApp (`POST /api/bot/creator-updates`) | `Influence-Inc/Outreach_Email_Automation` |
 
 ## Setup
 
@@ -116,6 +118,7 @@ Required environment variables:
 
 Optional:
 - `ANTHROPIC_API_KEY` — enables the ✨ AI-draft button in the admin chat composer (see below); unset leaves the feature off
+- `OUTREACH_API_BASE` + `OUTREACH_BOT_TOKEN` — the outreach service's base URL and its `OUTREACH_BOT_TOKEN`. Set both to send creators their campaign updates on WhatsApp (see **Campaign updates to creators on WhatsApp** below); with either unset the bot's Slack and email notifications behave exactly as before and no WhatsApp copy is sent
 
 ### 3. Create Slack App
 
@@ -300,4 +303,5 @@ Hitting that route 302s the brand to Slack's consent screen.
 - **Draft cards in the chat** — Each new video submitted for review lands in the chat as a card (draft number, source, tap to watch) on the creator's side of the conversation
 - **Draft link previews** — The card shows a real thumbnail of the video. The server resolves the link (Google Drive, YouTube, Vimeo and Loom via their thumbnail endpoints; anything else via the page's `og:image`), fetches the image and serves it from our own origin, so the preview works regardless of hotlink rules and the creator's URL never leaves the server. Previews are cached for 6h; a link with no usable preview (an unshared Drive file, say) quietly keeps the placeholder artwork
 - **AI-drafted admin replies** — The ✨ button in the admin composer opens a draft sheet: say what you want to get across in shorthand ("hook at 0:03, and we can wait for her AI credits, no rush") and Claude writes it as a full message, or leave the field empty and get replies read off the conversation. Drafts come back as iMessage-style bubbles above the composer — tap one to drop it in the composer, or ✎ to edit it in place first. They're written in the voice the team already uses with creators: greet by first name, lead with what's working, soften every ask and say why, keep the emoji, and break a long note into paragraphs and a numbered list. Nothing is ever posted automatically, and creators and brands never see the button. Set `ANTHROPIC_API_KEY` to switch it on (optional: `CLAUDE_MODEL`, `CLAUDE_EFFORT`, `CLAUDE_MAX_TOKENS`, `AI_DRAFT_CONTEXT_MESSAGES`); with the key unset the button isn't rendered and the chat is otherwise unchanged
+- **Campaign updates to creators on WhatsApp** — Everything this bot already tells Slack and email about a creator's content is also sent to the creator, on the channel they actually read. This bot has the events; the outreach service (`Influence-Inc/Outreach_Email_Automation`) has the phone numbers, the WhatsApp Business credentials and the approved templates, so `services/creator_updates.py` reports each event there — a draft submitted, the brand's approval (with the submit-posts link), feedback from the review chat relayed verbatim, a live post link, and deliverables complete — and every decision needing data this bot doesn't have (is the creator subscribed? is their 24h WhatsApp window open? send now or queue it?) is made on that side. A creator joins the lane when they sign their first contract and stays on it afterwards, so the next campaign's outreach reaches them in the same thread instead of a cold email. Each event carries a dedup key (the review id, the video id) so a webhook redelivery and the polling safety net can't message the creator twice. Sends are fire-and-forget on a background thread and never raise — an unreachable outreach service costs the WhatsApp copy, never the Slack post. Set `OUTREACH_API_BASE` + `OUTREACH_BOT_TOKEN` to switch it on
 - **Team & brand stay notified of chat activity** — Every creator/brand chat message pings `#content-reviews`, threaded under the review post so the conversation stays grouped. Because Slack doesn't notify anyone of a thread reply they aren't following, inbound (creator/brand) messages are also broadcast to the channel so the team actually sees them; the team's own admin-sent replies stay quiet threaded posts. Set `SLACK_REVIEWS_NOTIFY` (a user-group, user, or `<!here>`/`<!channel>` mention) to add a hard ping on inbound messages even when the channel is muted. The same broadcast applies to the brand's own workspace ping (creator/admin messages), so brands aren't left watching a silent thread either

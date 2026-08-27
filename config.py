@@ -160,6 +160,21 @@ class Config:
     # How many recent chat messages are fed to the model as context.
     AI_DRAFT_CONTEXT_MESSAGES = int(os.environ.get("AI_DRAFT_CONTEXT_MESSAGES", "40"))
 
+    # --- Campaign updates to creators over WhatsApp ---
+    # The outreach service (Influence-Inc/Outreach_Email_Automation) holds the
+    # creators' phone numbers, the WhatsApp Business credentials and the approved
+    # message templates; this bot holds the events (draft submitted, approved,
+    # brand feedback, post link, deliverables complete). Setting both vars lets
+    # the bot report those events there so the creator hears about them on
+    # WhatsApp — see services/creator_updates.py.
+    #
+    # OUTREACH_BOT_TOKEN must match the OUTREACH_BOT_TOKEN set on the outreach
+    # service. With either unset, campaign updates are skipped entirely and the
+    # bot's Slack + email notifications behave exactly as before.
+    OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE") or None
+    OUTREACH_BOT_TOKEN = os.environ.get("OUTREACH_BOT_TOKEN") or None
+    OUTREACH_API_TIMEOUT = int(os.environ.get("OUTREACH_API_TIMEOUT", "10"))
+
     # --- Testing ---
     # If set, the bot only processes the campaign with this exact name.
     # Leave empty/unset in production to process all campaigns.

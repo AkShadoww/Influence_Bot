@@ -27,6 +27,7 @@ from models.models import (
     EmailLog,
     PaymentRecord,
 )
+from services import creator_updates
 from services.brand_routing import post_to_brand_workspace
 from services.reelstats_api import ReelStatsAPI
 from services.email_service import EmailService, EmailSendResult
@@ -474,6 +475,28 @@ class SchedulerService:
             )
             # Payment alerts are admin-only: brands don't see "ready to pay"
             # messages for their own creators.
+            #
+            # The creator gets their own version of this news on WhatsApp: a
+            # wrap-up saying they're done and payment follows. Sent from inside
+            # the DeliverableAlert guard above, so it inherits that row's
+            # once-per-campaign dedup — this check runs on every poll and every
+            # deliverables_updated webhook, and allComplete stays true forever
+            # once it flips.
+            #
+            # The outreach service deliberately keeps the creator subscribed
+            # after this message rather than closing the conversation, so the
+            # next campaign's outreach reaches them in the same WhatsApp thread
+            # instead of a cold email.
+            creator_updates.deliverables_complete(
+                username=username,
+                email=creator.get("email"),
+                campaign={
+                    "id": campaign_id,
+                    "name": creator.get("campaign_name", ""),
+                    "brandName": creator.get("brand_name", ""),
+                },
+                dedup_key=f"deliverables:{campaign_id}:{username}",
+            )
             logger.info(f"Deliverable complete alert: @{username}")
         except Exception as e:
             logger.error(f"Error checking deliverables for @{username}: {e}")

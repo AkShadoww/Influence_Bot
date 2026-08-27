@@ -55,6 +55,40 @@ def _chat_url(space_id: int, party: str, identifier: Optional[str] = None) -> Op
     return f"{base}/chat/invite/{token}"
 
 
+def creator_chase_link(
+    *,
+    creator_username: str,
+    creator_email: Optional[str] = None,
+    campaign_slug: Optional[str] = None,
+    campaign_name: Optional[str] = None,
+    brand_name: Optional[str] = None,
+) -> Optional[str]:
+    """
+    A magic link into this creator's campaign chat, for the deadline emails.
+
+    Opens the space if it does not exist yet — the creator being chased
+    hardest is usually the one who has submitted nothing, and so has no
+    space from the review flow. Returns None when no link can be built
+    (no public base URL configured, or no username to key on), so callers
+    drop the invitation rather than shipping a dead URL.
+    """
+    # Imported here rather than at module scope: chat_service imports this
+    # module's siblings, and a top-level import would close the cycle.
+    from services import chat_service
+
+    space = chat_service.get_or_create_for_creator(
+        creator_username=creator_username,
+        creator_email=creator_email,
+        campaign_slug=campaign_slug,
+        campaign_name=campaign_name,
+        brand_name=brand_name,
+    )
+    if space is None:
+        return None
+    identifier = (creator_email or "").strip().lower() or f"@{creator_username}"
+    return _chat_url(space.id, "creator", identifier)
+
+
 def _brand_install(space: ChatSpace) -> Optional[SlackInstallation]:
     if not space.brand_install_id:
         return None

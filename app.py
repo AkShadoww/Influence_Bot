@@ -31,6 +31,8 @@ from bot.actions import register_actions
 from bot.chat_routes import register_chat_routes
 from services.email_service import EmailService
 from services.reelstats_api import ReelStatsAPI
+from services.inbound_replies import InboundReplyHandler
+from services import inbound_replies
 from services.webhook_handler import WebhookHandler
 from services.scheduler_service import SchedulerService
 from services.slack_authorize import authorize as slack_authorize
@@ -80,6 +82,7 @@ email_service = EmailService()
 reelstats_api = ReelStatsAPI()
 scheduler_service = SchedulerService(slack_client, email_service, reelstats_api)
 webhook_handler = WebhookHandler(slack_client, scheduler_service)
+inbound_handler = InboundReplyHandler(slack_client, reelstats_api)
 
 # ---------------------------------------------------------------------------
 # Register Slack Handlers
@@ -313,6 +316,36 @@ def reelstats_webhook():
     if success:
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "failed", "event": event_type}), 500
+
+
+# ---------------------------------------------------------------------------
+# Inbound creator replies (Resend)
+# ---------------------------------------------------------------------------
+@flask_app.route("/webhook/resend", methods=["POST"])
+def resend_inbound():
+    """
+    A creator replied to a chase email.
+
+    Unlike /webhook above, this route verifies its signature before doing
+    anything. It is the one inbound path that can lead to a contracted
+    deadline moving, so an unsigned request is refused rather than trusted —
+    and it fails closed when no secret is configured.
+    """
+    if not Config.CHASE_INBOUND_ENABLED:
+        return jsonify({"status": "disabled"}), 404
+
+    raw_body = request.get_data()
+    if not inbound_replies.verify_signature(raw_body, request.headers):
+        return jsonify({"error": "invalid signature"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        handled = inbound_handler.handle(payload)
+    except Exception as exc:
+        logger.exception("Unhandled error processing an inbound reply: %s", exc)
+        return jsonify({"status": "error"}), 500
+
+    return jsonify({"status": "ok" if handled else "ignored"}), 200
 
 
 # ---------------------------------------------------------------------------

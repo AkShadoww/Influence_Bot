@@ -254,6 +254,168 @@ def get_or_create_for_review(
         db.close()
 
 
+def get_or_create_for_creator(
+    *,
+    creator_username: str,
+    creator_email: Optional[str] = None,
+    campaign_slug: Optional[str] = None,
+    campaign_name: Optional[str] = None,
+    brand_name: Optional[str] = None,
+) -> Optional[ChatSpace]:
+    """
+    Resolve the chat space for a (creator, campaign, brand) that has no
+    review behind it yet, creating it on first use.
+
+    :func:`get_or_create_for_review` can only open a space for someone who
+    has already submitted a draft — it reads its identity fields off a
+    ``ReviewSubmission`` row. The creator the deadline ladder most needs to
+    reach is the one who has submitted nothing at all, so that path cannot
+    mint them a link. This one takes the identity directly.
+
+    It is the same space, not a parallel one: the reuse key is computed from
+    the same five fields, so the moment this creator does submit a draft,
+    ``get_or_create_for_review`` finds the space opened here and the chase
+    conversation and the review conversation are one thread. Both candidate
+    keys are matched for the same reason ``reuse_keys_for_review`` matches
+    both — a creator whose email arrives partway through a campaign would
+    otherwise hash to a second space.
+
+    Returns a detached ChatSpace, or None without a username to key on.
+    """
+    if not (creator_username or "").strip():
+        logger.warning("get_or_create_for_creator: no creator_username given")
+        return None
+
+    candidate_keys = list(dict.fromkeys([
+        compute_reuse_key(
+            creator_email=creator_email,
+            creator_username=creator_username,
+            campaign_slug=campaign_slug,
+            campaign_name=campaign_name,
+            brand_name=brand_name,
+        ),
+        compute_reuse_key(
+            creator_email=None,
+            creator_username=creator_username,
+            campaign_slug=campaign_slug,
+            campaign_name=campaign_name,
+            brand_name=brand_name,
+        ),
+    ]))
+
+    db = SessionLocal()
+    try:
+        existing = (
+            db.query(ChatSpace)
+            .filter(
+                ChatSpace.reuse_key.in_(candidate_keys),
+                ChatSpace.status != "archived",
+            )
+            .order_by(
+                (ChatSpace.status != "active"),
+                ChatSpace.created_at.desc(),
+            )
+            .first()
+        )
+
+        if existing is None and not (creator_email or "").strip():
+            # Called without an email, so the email-preferring key cannot be
+            # computed — and a space opened earlier *with* one is filed under
+            # exactly that key. Hash matching alone would miss it and open a
+            # second space, splitting the creator's thread in two. Fall back
+            # to matching the identity columns.
+            query = db.query(ChatSpace).filter(
+                func.lower(ChatSpace.creator_username) == creator_username.strip().lower(),
+                ChatSpace.status != "archived",
+            )
+            if campaign_slug:
+                query = query.filter(ChatSpace.campaign_slug == campaign_slug)
+            elif campaign_name:
+                query = query.filter(ChatSpace.campaign_name == campaign_name)
+            if brand_name:
+                query = query.filter(ChatSpace.brand_name == brand_name)
+            existing = query.order_by(
+                (ChatSpace.status != "active"),
+                ChatSpace.created_at.desc(),
+            ).first()
+
+        brand_install = find_install_for_brand_name(brand_name)
+        brand_install_id = brand_install.id if brand_install else None
+        resolved_team_id = brand_install.team_id if brand_install else None
+
+        if existing is not None:
+            # Backfill identity a space opened earlier may be missing, but
+            # never reopen an approved or archived one from here: a chase is
+            # not a reason to resurrect a finished conversation.
+            if creator_email and not existing.creator_email:
+                existing.creator_email = creator_email
+            if campaign_slug and not existing.campaign_slug:
+                existing.campaign_slug = campaign_slug
+            if campaign_name and not existing.campaign_name:
+                existing.campaign_name = campaign_name
+            if brand_name and not existing.brand_name:
+                existing.brand_name = brand_name
+            if resolved_team_id and not existing.workspace_team_id:
+                existing.workspace_team_id = resolved_team_id
+            if brand_install_id and not existing.brand_install_id:
+                existing.brand_install_id = brand_install_id
+            db.commit()
+            db.refresh(existing)
+            db.expunge(existing)
+            return existing
+
+        space = ChatSpace(
+            reuse_key=candidate_keys[0],
+            public_slug=_generate_public_slug(db),
+            creator_username=creator_username,
+            creator_email=creator_email,
+            campaign_slug=campaign_slug,
+            campaign_name=campaign_name,
+            brand_name=brand_name,
+            workspace_team_id=resolved_team_id,
+            brand_install_id=brand_install_id,
+            latest_review_id=None,
+            status="active",
+        )
+        db.add(space)
+        db.commit()
+        db.refresh(space)
+
+        creator_ident = (
+            (creator_email or "").strip().lower() or f"@{creator_username}"
+        )
+        brand_ident = resolved_team_id or _slug(brand_name) or "brand"
+        for party, ident, name in (
+            ("creator", creator_ident, creator_username),
+            ("brand", brand_ident, brand_name or "Brand"),
+        ):
+            member = (
+                db.query(ChatMember)
+                .filter_by(chat_space_id=space.id, party=party, identifier=ident)
+                .first()
+            )
+            if member is None:
+                db.add(ChatMember(
+                    chat_space_id=space.id,
+                    party=party,
+                    identifier=ident,
+                    display_name=name,
+                ))
+        db.commit()
+        db.refresh(space)
+        db.expunge(space)
+        return space
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Failed to open a chat space for @%s on %s",
+            creator_username, campaign_name or campaign_slug,
+        )
+        return None
+    finally:
+        db.close()
+
+
 def find_by_review_id(review_id: int) -> Optional[ChatSpace]:
     """Return the chat space currently pointing at this review, or None.
 

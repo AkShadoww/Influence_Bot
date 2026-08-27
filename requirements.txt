@@ -8,3 +8,6 @@ SQLAlchemy==2.0.36
 psycopg2-binary==2.9.9
 gunicorn==23.0.0
 anthropic==0.122.0
+# zoneinfo reads the system tz database, which slim container images omit.
+# The chase ladder resolves America/Los_Angeles at import, so ship it.
+tzdata==2025.2

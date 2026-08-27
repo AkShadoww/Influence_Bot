@@ -130,6 +130,23 @@ def build_deliverable_complete_blocks(
     ]
 
 
+def _chase_value(campaign_id: str, creator_username: str) -> str:
+    """Encode the identifiers the chase brake handlers need."""
+    return f"{campaign_id}|{creator_username}"
+
+
+# Headline and tone per rung. The pre-deadline tiers are reminders; the
+# post-deadline ones escalate, and the last hands over to a person.
+_RUNG_PRESENTATION = {
+    "overdue": (":red_circle:", "Deadline Overdue"),
+    "overdue_2": (":large_orange_circle:", "Still Overdue — Second Notice"),
+    "overdue_3": (":rotating_light:", "Final Notice Sent"),
+    "overdue_final": (":no_bell:", "Automated Chase Exhausted"),
+    "1_day": (":warning:", "Deadline Tomorrow!"),
+    "3_days": (":calendar:", "Deadline Approaching"),
+}
+
+
 def build_deadline_reminder_blocks(
     creator_username: str,
     campaign_name: str,
@@ -138,25 +155,38 @@ def build_deadline_reminder_blocks(
     reminder_type: str,
     days_left: int,
     email_note: str | None = None,
+    campaign_id: str = "",
+    days_overdue: int | None = None,
+    chat_url: str | None = None,
+    emailed: bool = True,
 ) -> list[dict]:
     """
-    Deadline reminder — 3 days, 1 day, or overdue.
+    One rung of the deadline ladder, as the team sees it in Slack.
 
-    `email_note` explains why the creator wasn't emailed (their videos in
-    review already cover what's outstanding), so the team chases the
-    review rather than the creator.
+    `email_note` explains why the creator wasn't emailed — their videos in
+    review already cover what's outstanding, the shortfall is views they
+    can't act on, or this is the final rung, which never emails. The team
+    reads it to know whether to chase the creator, the brand, or neither.
+
+    Post-deadline rungs carry the brake: Snooze parks the ladder for a few
+    days when someone has replied outside the system, Stop ends it for good.
+    Without them a four-rung ladder cannot be halted between polls.
     """
-    if reminder_type == "overdue":
-        emoji = ":red_circle:"
-        title = "Deadline Overdue!"
-        status_text = f"The deadline was *{deadline}* — now *{abs(days_left)} day(s) overdue*."
+    emoji, title = _RUNG_PRESENTATION.get(reminder_type, (":calendar:", "Deadline"))
+    is_post_deadline = reminder_type.startswith("overdue")
+    late = days_overdue if days_overdue is not None else abs(days_left)
+
+    if reminder_type == "overdue_final":
+        status_text = (
+            f"The deadline was *{deadline}* — now *{late} day(s) overdue*. "
+            "Three emails have gone out and the automated chase stops here. "
+            "*This one needs a person.*"
+        )
+    elif is_post_deadline:
+        status_text = f"The deadline was *{deadline}* — now *{late} day(s) overdue*."
     elif reminder_type == "1_day":
-        emoji = ":warning:"
-        title = "Deadline Tomorrow!"
         status_text = f"The deadline is *{deadline}* — *1 day remaining*."
     else:
-        emoji = ":calendar:"
-        title = "Deadline Approaching"
         status_text = f"The deadline is *{deadline}* — *{days_left} days remaining*."
 
     blocks = [
@@ -181,11 +211,271 @@ def build_deadline_reminder_blocks(
             "text": {"type": "mrkdwn", "text": status_text},
         },
     ]
+
     if email_note:
         blocks.append({
             "type": "context",
             "elements": [{"type": "mrkdwn", "text": f":mailbox_with_no_mail: {email_note}"}],
         })
+    elif emailed and is_post_deadline and reminder_type != "overdue_final":
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": ":outbox_tray: Creator emailed."}],
+        })
+
+    if is_post_deadline and campaign_id:
+        elements = [
+            {
+                "type": "button",
+                "action_id": "chase_snooze_3d",
+                "text": {"type": "plain_text", "text": ":zzz: Snooze 3d"},
+                "value": _chase_value(campaign_id, creator_username),
+            },
+            {
+                "type": "button",
+                "action_id": "chase_snooze_7d",
+                "text": {"type": "plain_text", "text": ":zzz: Snooze 7d"},
+                "value": _chase_value(campaign_id, creator_username),
+            },
+            {
+                "type": "button",
+                "action_id": "chase_stop",
+                "style": "danger",
+                "text": {"type": "plain_text", "text": ":octagonal_sign: Stop chasing"},
+                "value": _chase_value(campaign_id, creator_username),
+            },
+        ]
+        if chat_url:
+            # Plain link button (no action_id) — it only navigates.
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":speech_balloon: Open chat"},
+                "url": chat_url,
+            })
+        blocks.append({
+            "type": "actions",
+            "block_id": f"chase_actions_{campaign_id}_{creator_username}",
+            "elements": elements,
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
+
+
+_DEADLINE_SOURCE_LABELS = {
+    "bot": "a creator reply",
+    "admin": "the dashboard",
+    "deal-studio": "Deal Studio",
+}
+
+
+def build_deadline_changed_blocks(
+    creator_username: str,
+    campaign_name: str,
+    brand_name: str,
+    previous_deadline: str | None,
+    new_deadline: str | None,
+    source: str = "admin",
+    actor: str | None = None,
+    reason: str | None = None,
+    ladder_reset: bool = False,
+) -> list[dict]:
+    """
+    A creator's deadline moved — who moved it, from what to what, and why.
+
+    The campaigns dashboard owns the date and fires this for every writer, so
+    this is the one place the team sees a deadline move regardless of whether
+    it came from an admin editing the row, a signed contract landing, or a
+    creator agreeing a new date in chat.
+    """
+    origin = _DEADLINE_SOURCE_LABELS.get(source, source)
+    fields = [
+        {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+        {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name}"},
+        {"type": "mrkdwn", "text": f"*Was:*\n{previous_deadline or '—'}"},
+        {"type": "mrkdwn", "text": f"*Now:*\n{new_deadline or '—'}"},
+    ]
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": ":calendar: Deadline Changed"},
+        },
+        {"type": "section", "fields": fields},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"Moved via *{origin}*"
+                    + (f" by *{actor}*" if actor else "")
+                    + (f" — {brand_name}" if brand_name else "")
+                    + "."
+                ),
+            },
+        },
+    ]
+
+    if reason:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"> {reason}"},
+        })
+
+    if ladder_reset:
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": (
+                    ":arrows_counterclockwise: Chase reminders reset for the new "
+                    "date — any snooze or stop on this creator has been lifted."
+                ),
+            }],
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
+
+
+_INTENT_PRESENTATION = {
+    "commits_to_date": (":date:", "Creator committed to a date"),
+    "cannot_deliver": (":warning:", "Creator says they cannot deliver"),
+    "says_already_posted": (":eyes:", "Creator says it is already live"),
+    "asks_a_question": (":question:", "Creator asked a question"),
+    "unclear": (":envelope:", "Creator replied"),
+}
+
+
+def build_inbound_reply_blocks(
+    creator_username: str,
+    campaign_name: str,
+    campaign_id: str,
+    subject: str,
+    body: str,
+    reading: dict | None = None,
+    current_deadline: str | None = None,
+) -> list[dict]:
+    """
+    A creator's emailed reply, and — when they named a date — a *proposal* to
+    move their deadline to it.
+
+    The date is never applied here. A deadline is a contract term, and a model
+    reading an email is not authority to rewrite one; the Confirm button is,
+    because a person pressed it. Without a usable date the reply is still
+    posted, because the whole point is that the team stops missing replies.
+    """
+    reading = reading or {}
+    intent = reading.get("intent") or "unclear"
+    emoji, title = _INTENT_PRESENTATION.get(intent, _INTENT_PRESENTATION["unclear"])
+    proposed = reading.get("proposed_date")
+    confidence = reading.get("confidence")
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"{emoji} {title}"},
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Creator:*\n@{creator_username}"},
+                {"type": "mrkdwn", "text": f"*Campaign:*\n{campaign_name or '—'}"},
+                {"type": "mrkdwn", "text": f"*Deadline:*\n{current_deadline or '—'}"},
+                {"type": "mrkdwn", "text": f"*Proposed:*\n{proposed or '—'}"},
+            ],
+        },
+    ]
+
+    if reading.get("summary"):
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{reading['summary']}*"},
+        })
+
+    excerpt = (body or "").strip()
+    if excerpt:
+        if len(excerpt) > 1200:
+            excerpt = excerpt[:1200] + "…"
+        quoted = "\n".join(f"> {line}" for line in excerpt.splitlines())
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": quoted},
+        })
+    else:
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": (
+                    ":grey_question: The message body could not be read — "
+                    "check the inbox directly."
+                ),
+            }],
+        })
+
+    if subject:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f":email: {subject}"}],
+        })
+
+    if proposed and campaign_id:
+        note = "Nothing has changed yet — confirm to move the deadline."
+        if confidence and confidence != "high":
+            note = (
+                f"Read with *{confidence}* confidence — check the message above "
+                "before confirming."
+            )
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f":lock: {note}"}],
+        })
+        blocks.append({
+            "type": "actions",
+            "block_id": f"chase_revision_{campaign_id}_{creator_username}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "chase_revision_confirm",
+                    "style": "primary",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f":white_check_mark: Move deadline to {proposed}",
+                    },
+                    "value": f"{campaign_id}|{creator_username}|{proposed}",
+                },
+                {
+                    "type": "button",
+                    "action_id": "chase_revision_dismiss",
+                    "text": {"type": "plain_text", "text": ":x: Dismiss"},
+                    "value": f"{campaign_id}|{creator_username}|{proposed}",
+                },
+            ],
+        })
+    elif campaign_id:
+        # No date to act on, but the chase should still pause while a person
+        # reads this — otherwise the next rung goes out underneath them.
+        blocks.append({
+            "type": "actions",
+            "block_id": f"chase_reply_{campaign_id}_{creator_username}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "chase_snooze_3d",
+                    "text": {"type": "plain_text", "text": ":zzz: Snooze 3d"},
+                    "value": f"{campaign_id}|{creator_username}",
+                },
+                {
+                    "type": "button",
+                    "action_id": "chase_stop",
+                    "style": "danger",
+                    "text": {"type": "plain_text", "text": ":octagonal_sign: Stop chasing"},
+                    "value": f"{campaign_id}|{creator_username}",
+                },
+            ],
+        })
+
     blocks.append({"type": "divider"})
     return blocks
 

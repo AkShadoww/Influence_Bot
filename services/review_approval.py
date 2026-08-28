@@ -25,7 +25,7 @@ from models.models import (
     ReviewSubmission,
     SessionLocal,
 )
-from services import chat_service, submission_links
+from services import chat_service, creator_updates, submission_links
 from services.email_service import EmailService
 from templates.email_templates import video_approved
 from templates.slack_blocks import build_review_approved_blocks
@@ -119,6 +119,20 @@ def approve_review_core(
             )
         except Exception as exc:
             logger.warning("approval email send failed: %s", exc)
+
+    # The same "you're approved, here's where to put the post link" that just
+    # went out by email, delivered to the creator's WhatsApp. This is the update
+    # they act on — nothing gets posted until they read it — so it is the one
+    # least worth leaving in an inbox. Deduped on the review id: this function is
+    # reached from both the brand's Slack button and the 24h auto-approval sweep,
+    # and is deliberately idempotent for exactly that reason.
+    creator_updates.review_approved(
+        username=creator_username,
+        email=creator_email,
+        campaign={"name": campaign_name, "brandName": brand_name},
+        submit_posts_url=submit_posts_url,
+        dedup_key=f"review:{review_id}",
+    )
 
     # The chat space runs for the whole campaign, so an approval doesn't
     # close it — it posts a notice into the conversation. The creator's next

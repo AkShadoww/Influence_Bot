@@ -29,6 +29,7 @@ from models.models import (
     SessionLocal,
     SlackInstallation,
 )
+from services import creator_updates
 from services.email_service import EmailService
 from templates.email_templates import chat_new_message
 from templates.slack_blocks import (
@@ -288,6 +289,27 @@ def notify_new_message(*, chat_space_id: int, sender_party: str, message_id: int
                 )
             except Exception as exc:
                 logger.warning("chat new-message email failed: %s", exc)
+
+    # The same message, to the creator's WhatsApp. Feedback from the review
+    # chat is the update most likely to need acting on — a change request the
+    # creator has to re-shoot for — and until now it only reached them by email.
+    # The body is relayed verbatim for that reason: a paraphrased change request
+    # is how a re-shoot gets shot wrong.
+    #
+    # Only brand/admin messages: a creator's own message doesn't get sent back
+    # to them, and the email branch above already draws the same line.
+    if sender_party in ("brand", "admin"):
+        creator_updates.review_feedback(
+            username=space.creator_username,
+            email=space.creator_email,
+            campaign={"name": space.campaign_name, "brandName": space.brand_name},
+            feedback=full_body,
+            sender_name=sender_name,
+            chat_url=_chat_url(space.id, party="creator", identifier=space.creator_email),
+            # One WhatsApp message per chat message. Keyed on the message row so
+            # a retried notification can't repeat the brand's feedback.
+            dedup_key=f"chat:{message_id}",
+        )
 
     if sender_party in ("creator", "admin"):
         install = _brand_install(space)

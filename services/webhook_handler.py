@@ -19,7 +19,7 @@ from slack_sdk.errors import SlackApiError
 
 from config import Config
 from models.models import ReviewSubmission, SessionLocal
-from services import submission_links
+from services import creator_updates, submission_links
 from services.brand_routing import post_to_brand_workspace
 from templates.slack_blocks import (
     build_review_submitted_blocks,
@@ -305,6 +305,18 @@ class WebhookHandler:
             finally:
                 db.close()
 
+            # Tell the creator their draft landed. They uploaded into a form
+            # and otherwise hear nothing until the brand gets round to it, so
+            # this is the receipt for that. Keyed on the review row's id: the
+            # campaigns dashboard fires this webhook AND is polled as a safety
+            # net, and the same submission genuinely arrives twice.
+            creator_updates.review_submitted(
+                username=username,
+                email=creator.get("email"),
+                campaign=campaign,
+                dedup_key=f"review:{review_id}",
+            )
+
             # Open (or reuse) the campaign chat space NOW so the brand's magic
             # link can be baked into the Request Changes button, and so the
             # submission card lands in the chat as the draft arrives. The
@@ -438,6 +450,19 @@ class WebhookHandler:
                 video=video,
                 platforms=[link["platform"] for link in links],
                 video_title=video_title,
+            )
+
+            # Same receipt logic as a draft submission: confirm the live link
+            # reached us and that tracking is now our job, not theirs. Keyed on
+            # the video id (falling back to the first URL) so a redelivery of
+            # this webhook doesn't thank them twice for the same post.
+            primary_url = links[0]["url"] if links else None
+            creator_updates.post_submitted(
+                username=username,
+                email=creator.get("email"),
+                campaign=campaign,
+                post_url=primary_url,
+                dedup_key=f"post:{video.get('id') or primary_url or video_title}",
             )
 
             admin_blocks = build_video_links_submitted_blocks(

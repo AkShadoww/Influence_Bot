@@ -110,9 +110,21 @@ class EmailService:
         )
         return True
 
-    def send_followup(self, to_email: str, template_data: dict) -> bool:
-        """Send a follow-up email using a template dict with 'subject' and 'body'."""
-        return self.send_email(to_email, template_data["subject"], template_data["body"])
+    def send_followup(
+        self, to_email: str, template_data: dict, reply_to: str = None,
+    ) -> bool:
+        """Send a follow-up email using a template dict with 'subject' and 'body'.
+
+        `reply_to` overrides the default for one send. The deadline ladder uses
+        it to give each chase a per-chase address, so a creator hitting reply
+        lands somewhere the bot can read rather than in a human inbox.
+        """
+        return self.send_email(
+            to_email,
+            template_data["subject"],
+            template_data["body"],
+            reply_to=reply_to,
+        )
 
     def send_approval_notification(self, to_email: str, template_data: dict) -> bool:
         """Send an approval/changes-requested email."""
@@ -125,6 +137,7 @@ class EmailService:
         template_type: str,
         campaign_id: str,
         creator_username: str,
+        reply_to: str = None,
     ) -> EmailSendResult:
         """
         Idempotent follow-up send. Checks EmailLog first; only attempts to send
@@ -146,7 +159,7 @@ class EmailService:
             if existing:
                 return EmailSendResult.ALREADY_SENT
 
-            sent = self.send_followup(to_email, template_data)
+            sent = self.send_followup(to_email, template_data, reply_to=reply_to)
             if not sent:
                 return EmailSendResult.FAILED
 

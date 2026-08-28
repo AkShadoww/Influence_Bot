@@ -164,6 +164,8 @@ class WebhookHandler:
             return self._run_checks(payload, ["milestones"])
         elif event_type == "deliverables_updated":
             return self._run_checks(payload, ["deliverables", "upload_followup"])
+        elif event_type == "deadline_changed":
+            return self._handle_deadline_changed(payload)
         elif event_type == "deadline_check":
             return self._run_checks(payload, ["deadline", "upload_followup"])
         elif event_type == "creator_updated":
@@ -180,6 +182,68 @@ class WebhookHandler:
     # ------------------------------------------------------------------
     # Campaign lifecycle
     # ------------------------------------------------------------------
+    def _handle_deadline_changed(self, payload: dict) -> bool:
+        """
+        A creator's deadline moved on the campaigns dashboard.
+
+        The dashboard owns the date and fires this for every writer — an admin
+        editing the row, a signed contract landing, or the bot applying a
+        revision a creator agreed to — so this is the single place the team
+        hears about it, whoever moved it.
+
+        The ladder is also reset here, and that is the part that matters most.
+        Rung dedup rows record only *that* a rung was sent, never for which
+        deadline, so a creator chased to the second rung who then agrees a new
+        date would sail past it in silence.
+        """
+        from services import chase_ladder
+        from templates.slack_blocks import build_deadline_changed_blocks
+
+        campaign = payload.get("campaign") or {}
+        creator = payload.get("creator") or {}
+        change = payload.get("change") or {}
+
+        username = creator.get("username") or ""
+        campaign_id = campaign.get("id") or ""
+        if not username or not campaign_id:
+            logger.warning(
+                "deadline_changed missing username/campaign id: %r", payload,
+            )
+            return False
+
+        cleared = chase_ladder.reset_for_new_deadline(campaign_id, username)
+
+        try:
+            blocks = build_deadline_changed_blocks(
+                creator_username=username,
+                campaign_name=campaign.get("name", ""),
+                brand_name=campaign.get("brandName", ""),
+                previous_deadline=creator.get("previousDeadline") or change.get("from"),
+                new_deadline=creator.get("deadline") or change.get("to"),
+                source=change.get("source", "admin"),
+                actor=change.get("actor"),
+                reason=change.get("reason"),
+                ladder_reset=cleared > 0,
+            )
+            self.client.chat_postMessage(
+                channel=Config.SLACK_CHANNEL_DEADLINES,
+                text=(
+                    f"Deadline changed for @{username}: "
+                    f"{change.get('from') or '—'} → {change.get('to') or '—'}"
+                ),
+                blocks=blocks,
+            )
+        except Exception as exc:
+            logger.exception("Failed to announce deadline change: %s", exc)
+            return False
+
+        logger.info(
+            "Deadline changed for @%s on %s: %s -> %s (%s), %d chase row(s) cleared",
+            username, campaign_id, change.get("from"), change.get("to"),
+            change.get("source"), cleared,
+        )
+        return True
+
     def _handle_campaign_ended(self, payload: dict) -> bool:
         """Archive any chat spaces tied to a campaign that has ended."""
         try:

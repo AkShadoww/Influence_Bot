@@ -4,7 +4,7 @@ Handles button clicks on notification messages.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 
@@ -13,7 +13,7 @@ from models.models import (
     ReviewSubmission,
     SessionLocal,
 )
-from services import chat_service, review_ignore, review_messages
+from services import chase_ladder, chat_service, review_ignore, review_messages
 from services.review_approval import approve_review_core
 from templates.slack_blocks import (
     build_review_closed_context_block,
@@ -64,6 +64,24 @@ def _mark_brand_review_approved(review_id: int, creator_username: str) -> None:
         },
         text=f"Review approved for @{creator_username}",
     )
+
+
+_reelstats_api = None
+
+
+def reelstats_api_singleton():
+    """
+    One ReelStatsAPI for the action handlers.
+
+    Built lazily rather than at import: this module is imported during app
+    construction, before Config has necessarily been read, and a handler only
+    needs the client when someone actually clicks.
+    """
+    global _reelstats_api
+    if _reelstats_api is None:
+        from services.reelstats_api import ReelStatsAPI
+        _reelstats_api = ReelStatsAPI()
+    return _reelstats_api
 
 
 def register_actions(app):
@@ -442,6 +460,151 @@ def register_actions(app):
     # is only rendered on the admin copy of the message
     # (`include_ignore=True`), so a brand never sees it.
     # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # The chase brake
+    # ---------------------------------------------------------------
+    # Resend only sends. A creator who replies to a chase lands in a human
+    # inbox the bot cannot read, so without a brake the ladder keeps climbing
+    # past someone who already answered. These buttons are that brake, and
+    # the person reading the reply is already in this channel.
+
+    def _chase_target(action) -> tuple[str, str] | None:
+        """Unpack "campaign_id|creator_username" from a brake button."""
+        raw = action.get("value") or ""
+        campaign_id, _, creator_username = raw.partition("|")
+        if not campaign_id or not creator_username:
+            logger.warning("Chase brake clicked with unusable value %r", raw)
+            return None
+        return campaign_id, creator_username
+
+    def _apply_chase_brake(body, respond, *, status, days=None):
+        user = body.get("user", {})
+        actor_id = user.get("id", "")
+        actor_name = user.get("username") or user.get("name") or actor_id
+
+        target = _chase_target((body.get("actions") or [{}])[0])
+        if target is None:
+            return
+        campaign_id, creator_username = target
+
+        until = None
+        if days:
+            until = chase_ladder.today_local() + timedelta(days=days)
+
+        chase_ladder.set_state(
+            campaign_id,
+            creator_username,
+            status=status,
+            snoozed_until=until,
+            set_by=actor_id,
+            reason=f"{status} by @{actor_name} in Slack",
+        )
+
+        if status == "stopped":
+            note = (
+                f":octagonal_sign: Chase stopped for *@{creator_username}* by "
+                f"<@{actor_id}> ({_utc_stamp()}). No further deadline emails "
+                "will go out for this campaign."
+            )
+        else:
+            note = (
+                f":zzz: Chase snoozed for *@{creator_username}* by <@{actor_id}> "
+                f"until *{until}* ({_utc_stamp()})."
+            )
+
+        # Posted into the thread rather than replacing the alert: the rung
+        # that prompted the click stays readable above it, and a later
+        # Stop after a Snooze reads as the sequence it was.
+        respond(text=note, response_type="in_channel", replace_original=False)
+        logger.info(
+            "Chase %s for @%s on %s by %s", status, creator_username,
+            campaign_id, actor_name,
+        )
+
+    @app.action("chase_snooze_3d")
+    def handle_chase_snooze_3d(ack, body, client, respond):
+        ack()
+        _apply_chase_brake(body, respond, status="snoozed", days=3)
+
+    @app.action("chase_snooze_7d")
+    def handle_chase_snooze_7d(ack, body, client, respond):
+        ack()
+        _apply_chase_brake(body, respond, status="snoozed", days=7)
+
+    @app.action("chase_stop")
+    def handle_chase_stop(ack, body, client, respond):
+        ack()
+        _apply_chase_brake(body, respond, status="stopped")
+
+    # ---------------------------------------------------------------
+    # Confirming a deadline a creator asked for
+    # ---------------------------------------------------------------
+    # A creator's emailed reply is read by a model and posted here as a
+    # *proposal*. A deadline is a contract term, so nothing reaches the
+    # dashboard until someone presses this button — the authority is the
+    # click, never the classification.
+
+    @app.action("chase_revision_confirm")
+    def handle_chase_revision_confirm(ack, body, client, respond):
+        ack()
+
+        user = body.get("user", {})
+        actor_id = user.get("id", "")
+        actor_name = user.get("username") or user.get("name") or actor_id
+
+        raw = ((body.get("actions") or [{}])[0]).get("value") or ""
+        parts = raw.split("|")
+        if len(parts) != 3 or not all(parts):
+            logger.warning("chase_revision_confirm got an unusable value %r", raw)
+            return
+        campaign_id, creator_username, new_deadline = parts
+
+        ok, message = reelstats_api_singleton().update_deadline(
+            campaign_id=campaign_id,
+            username=creator_username,
+            deadline=new_deadline,
+            reason=f"Creator replied by email; confirmed by @{actor_name}",
+            actor=creator_username,
+        )
+
+        if ok:
+            # The ladder reset and the channel notice both come back through
+            # the dashboard's `deadline_changed` webhook, so there is nothing
+            # to do here but confirm the click.
+            note = (
+                f":white_check_mark: <@{actor_id}> moved *@{creator_username}*'s "
+                f"deadline to *{new_deadline}*. {message}"
+            )
+        else:
+            note = (
+                f":x: Could not move *@{creator_username}*'s deadline to "
+                f"*{new_deadline}*. {message}"
+            )
+        respond(text=note, response_type="in_channel", replace_original=False)
+        logger.info(
+            "Deadline revision %s for @%s by %s",
+            "confirmed" if ok else "refused", creator_username, actor_name,
+        )
+
+    @app.action("chase_revision_dismiss")
+    def handle_chase_revision_dismiss(ack, body, client, respond):
+        ack()
+        user = body.get("user", {})
+        actor_id = user.get("id", "")
+
+        raw = ((body.get("actions") or [{}])[0]).get("value") or ""
+        parts = raw.split("|")
+        creator_username = parts[1] if len(parts) > 1 else "this creator"
+
+        respond(
+            text=(
+                f":x: <@{actor_id}> dismissed the proposed deadline for "
+                f"*@{creator_username}* ({_utc_stamp()}). Nothing was changed."
+            ),
+            response_type="in_channel",
+            replace_original=False,
+        )
+
     @app.action("review_ignore")
     def handle_review_ignore(ack, body, client, respond):
         ack()

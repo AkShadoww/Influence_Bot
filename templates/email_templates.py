@@ -4,6 +4,46 @@ All emails are sent from jennifer@useinfluence.xyz.
 """
 
 
+def _reply_block(chat_url: str | None) -> str:
+    """
+    The line that turns a reply we cannot read into one we can.
+
+    Resend only sends. A creator who answers a chase by hitting reply lands in
+    a human inbox the bot never sees, so the ladder keeps climbing and the
+    next rung goes out as though they had said nothing. Pointing them at their
+    chat space instead puts the answer somewhere the system can act on. When
+    the link can't be built we say nothing rather than ship a dead URL.
+    """
+    if not chat_url:
+        return ""
+    return (
+        "The quickest way to reach us is your campaign chat — "
+        "you'll also find whatever's next for you there:\n"
+        f"{chat_url}\n\n"
+    )
+
+
+def _delivery_gap(videos_posted: int | None, videos_required: int | None) -> str:
+    """
+    "1 of 2 videos are live" — the specific shortfall, in one clause.
+
+    A chase that names the number is much harder to file away than one that
+    refers vaguely to "your content", and it also catches the case where our
+    records and the creator's memory disagree: they can see immediately what
+    we think is missing.
+    """
+    if not videos_required:
+        return ""
+    posted = videos_posted or 0
+    if posted <= 0:
+        noun = "video is" if videos_required == 1 else "videos are"
+        return f"We haven't seen any of the {videos_required} {noun} live yet."
+    return (
+        f"We're showing {posted} of {videos_required} videos live, "
+        f"so {videos_required - posted} still to come."
+    )
+
+
 def deadline_reminder_email(
     creator_name: str,
     campaign_name: str,
@@ -11,17 +51,67 @@ def deadline_reminder_email(
     deadline: str,
     reminder_type: str,
     days_left: int,
+    chat_url: str | None = None,
+    days_overdue: int | None = None,
+    videos_posted: int | None = None,
+    videos_required: int | None = None,
 ) -> dict:
-    """Email template for deadline reminders (3 days, 1 day, overdue)."""
-    if reminder_type == "overdue":
+    """
+    Email body for one rung of the deadline ladder.
+
+    Before the deadline (``3_days``, ``1_day``) the job is a nudge. After it
+    (``overdue``, ``overdue_2``, ``overdue_3``) the job is to get a date out
+    of the creator, and each rung asks more plainly than the last. The fourth
+    rung has no body here on purpose — it hands the creator to a person and
+    sends them nothing.
+
+    Every rung carries the chat link, so a reply lands somewhere the bot can
+    read it rather than in an inbox it cannot.
+    """
+    reply = _reply_block(chat_url)
+    gap = _delivery_gap(videos_posted, videos_required)
+    gap_line = f"{gap}\n\n" if gap else ""
+    late = days_overdue if days_overdue is not None else abs(days_left)
+
+    if reminder_type == "overdue_3":
+        subject = f"Final notice: {brand_name} content is {late} days overdue"
+        body = f"""Hi {creator_name},
+
+We've written twice about the {brand_name} campaign ("{campaign_name}"), and we haven't heard back. The deadline was {deadline} — {late} days ago.
+
+{gap_line}The deliverables and date in this email are the ones in your signed agreement, so we do need to resolve it now rather than let it drift. Please reply today with either the content or a date you can commit to.
+
+{reply}If something has changed on your side and you can no longer deliver, that's genuinely fine to say — tell us and we'll close it off cleanly. What doesn't work is silence.
+
+Best regards,
+
+Jennifer
+INFLUENCE Team
+"""
+    elif reminder_type == "overdue_2":
+        subject = f"Following up: {brand_name} content — {late} days past deadline"
+        body = f"""Hi {creator_name},
+
+Following up on the {brand_name} campaign ("{campaign_name}"). The deadline was {deadline}, so we're now {late} days past it.
+
+{gap_line}Could you reply with the date you'll have this posted? Even "next Tuesday" is enough — we just need something to tell the brand.
+
+{reply}If anything's blocking you — the brief, the product, approvals — say so and we'll sort it out.
+
+Thanks,
+
+Jennifer
+INFLUENCE Team
+"""
+    elif reminder_type == "overdue":
         subject = f"Urgent: {brand_name} Content — Deadline Passed"
         body = f"""Hi {creator_name},
 
 Hope you're doing well. The deadline for the {brand_name} campaign ("{campaign_name}") was {deadline} and has now passed.
 
-This is now quite time-sensitive, and we really want to make sure everything goes smoothly for both you and the brand.
+{gap_line}Could you reply today and let us know when the content will go up? A specific date is ideal — it lets us keep the brand in the loop instead of guessing.
 
-Could you please reply to this email today with a status update? Even a quick note letting us know when we can expect the post would be really helpful.
+{reply}If you need anything from us to get it over the line, just ask.
 
 Thank you so much - we truly appreciate your collaboration!
 
@@ -36,9 +126,9 @@ INFLUENCE Team
 
 Just a quick heads-up, the deadline for your {brand_name} campaign ("{campaign_name}") is tomorrow ({deadline}).
 
-Please make sure your content is posted on time. If there's anything holding things up or if you need any support from our end, let us know and we're happy to help!
+{gap_line}Please make sure your content is posted on time. If there's anything holding things up or if you need any support from our end, let us know and we're happy to help!
 
-Looking forward to seeing the content go live.
+{reply}Looking forward to seeing the content go live.
 
 Best,
 
@@ -53,7 +143,7 @@ Just a friendly reminder that the deadline for your {brand_name} campaign ("{cam
 
 If you haven't already, please make sure everything is on track for posting by the deadline. If you have any questions about the brief or deliverables, don't hesitate to reach out.
 
-Thanks for being such a great partner on this!
+{reply}Thanks for being such a great partner on this!
 
 Warm regards,
 

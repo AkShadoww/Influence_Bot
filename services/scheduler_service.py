@@ -27,7 +27,10 @@ from models.models import (
     EmailLog,
     PaymentRecord,
 )
+from services import chase_ladder
+from services import chat_notifications
 from services import creator_updates
+from services import inbound_replies
 from services.brand_routing import post_to_brand_workspace
 from services.reelstats_api import ReelStatsAPI
 from services.email_service import EmailService, EmailSendResult
@@ -248,8 +251,24 @@ class SchedulerService:
                         # review coverage suppresses would mark this tier as
                         # "already emailed" forever, so the reminder could
                         # never fire later if the brand sends the draft back.
+                        #
+                        # Post-deadline rungs are never seeded at all. The
+                        # baseline exists to stop a redeploy re-announcing
+                        # things that already happened, but an email that is
+                        # *owed* has not happened — and seeding it wrote a
+                        # permanent "already sent" for a creator who never
+                        # received anything. On the ephemeral SQLite this runs
+                        # on every deploy, so any creator who went overdue
+                        # between two deploys was silently never chased. The
+                        # Slack row above is still seeded: re-announcing an
+                        # overdue creator in the channel is noise, but the
+                        # email is the whole point.
                         email = creator.get("email")
-                        if email and not review_coverage(creator).covered:
+                        if (
+                            email
+                            and not reminder_type.startswith("overdue")
+                            and not review_coverage(creator).covered
+                        ):
                             recorded += self._seed_row(
                                 db, EmailLog,
                                 recipient_email=email,
@@ -512,7 +531,15 @@ class SchedulerService:
             self.check_deadline_reminder_for(creator)
 
     def check_deadline_reminder_for(self, creator: dict):
-        """Run deadline-reminder check for a single creator dict."""
+        """
+        Run the deadline check for a single creator.
+
+        Before the deadline this is the unchanged three-day / one-day
+        reminder. After it, the chase ladder decides which of four rungs is
+        due — see services/chase_ladder.py, which owns every rule about
+        timing, holds and stop conditions. This method only delivers what it
+        is told to.
+        """
         # Skip creators who've already finished — deliverables.allComplete
         # is set on the campaign page once views + videos are both met,
         # at which point a deadline reminder is just noise.
@@ -529,81 +556,180 @@ class SchedulerService:
         except ValueError:
             return
 
-        today = date.today()
+        # Deadlines are bare calendar dates worked to by creators in the US,
+        # so "today" is read in their zone rather than the server's. On a UTC
+        # host the two disagree for the last seven hours of every day, which
+        # marked a Californian creator overdue at 5pm on the day it was still
+        # due.
+        today = chase_ladder.today_local()
         days_left = (deadline - today).days
 
         if days_left < 0:
-            reminder_type = "overdue"
-        elif days_left <= 1:
+            self._run_chase_rung(creator, deadline_str)
+            return
+
+        if days_left <= 1:
             reminder_type = "1_day"
         elif days_left <= 3:
             reminder_type = "3_days"
         else:
             return
 
-        username = creator.get("username", "")
-        campaign_id = creator.get("campaign_id", "")
-        email = creator.get("email")
-
         # A creator who has already shared enough videos for review isn't
         # stalling — they're waiting on the brand. Skip the nag email, but
         # still post the internal Slack alert (annotated) so the team knows
         # to chase the review instead of the creator.
         coverage = review_coverage(creator)
+        self._deliver_rung(
+            creator,
+            rung=reminder_type,
+            deadline_str=deadline_str,
+            days_left=days_left,
+            days_overdue=None,
+            send_email=bool(creator.get("email")) and not coverage.covered,
+            email_note=(
+                f"Creator email skipped — {coverage.summary}."
+                if coverage.covered else None
+            ),
+        )
 
-        # Email dedup is independent of Slack dedup: try the email every tick
-        # until it succeeds, even if the Slack message was already posted.
-        email_result = None
-        if email and coverage.covered:
-            logger.info(
-                "Deadline reminder email suppressed for @%s (%s): %s",
-                username, reminder_type, coverage.summary,
+    def _run_chase_rung(self, creator: dict, deadline_str: str):
+        """Post-deadline: ask the ladder what is due, then deliver it."""
+        username = creator.get("username", "")
+        decision = chase_ladder.decide(creator)
+
+        if decision.rung is None:
+            logger.debug(
+                "No chase rung due for @%s: %s", username, decision.skip_reason,
             )
-        elif email:
+            return
+
+        # The poll ticks every minute, so without this a rung goes out the
+        # instant its date rolls over — a final notice timestamped 12:01am.
+        # Returning here just defers it: the next poll inside business hours
+        # picks the same rung up, because nothing has been recorded yet.
+        if not chase_ladder.within_send_window():
+            logger.debug(
+                "Chase rung %s for @%s deferred — outside the send window",
+                decision.rung, username,
+            )
+            return
+
+        self._deliver_rung(
+            creator,
+            rung=decision.rung,
+            deadline_str=deadline_str,
+            days_left=-decision.raw_days_overdue,
+            days_overdue=decision.days_overdue,
+            send_email=decision.email,
+            email_note=decision.email_note,
+        )
+
+    def _deliver_rung(
+        self,
+        creator: dict,
+        *,
+        rung: str,
+        deadline_str: str,
+        days_left: int,
+        days_overdue: int | None,
+        send_email: bool,
+        email_note: str | None,
+    ):
+        """
+        Send one rung: the creator's email and the team's Slack alert.
+
+        The two are deduped independently and always have been. The email is
+        retried every tick until it succeeds, so a Resend outage doesn't cost
+        a creator their notice, while the Slack row is written once. Both are
+        checked up front purely to avoid opening a chat space and minting a
+        magic-link token on every poll for a rung that already went out.
+        """
+        username = creator.get("username", "")
+        campaign_id = creator.get("campaign_id", "")
+        email = creator.get("email")
+        deliverables = creator.get("deliverables", {}) or {}
+
+        db = SessionLocal()
+        try:
+            slack_done = db.query(DeadlineReminder).filter_by(
+                campaign_id=campaign_id,
+                creator_username=username,
+                reminder_type=rung,
+            ).first() is not None
+            email_done = not send_email or db.query(EmailLog).filter_by(
+                recipient_email=email or "",
+                template_type=f"deadline_{rung}",
+                campaign_id=campaign_id,
+                creator_username=username,
+            ).first() is not None
+        finally:
+            db.close()
+
+        if slack_done and email_done:
+            return
+
+        # One link, built once, shared by the email body and the Slack button.
+        chat_url = chat_notifications.creator_chase_link(
+            creator_username=username,
+            creator_email=email,
+            campaign_slug=creator.get("campaign_slug"),
+            campaign_name=creator.get("campaign_name"),
+            brand_name=creator.get("brand_name"),
+        )
+
+        email_result = None
+        if send_email and email:
             from templates.email_templates import deadline_reminder_email
             template = deadline_reminder_email(
                 creator_name=username,
                 campaign_name=creator.get("campaign_name", ""),
                 brand_name=creator.get("brand_name", ""),
                 deadline=deadline_str,
-                reminder_type=reminder_type,
+                reminder_type=rung,
                 days_left=days_left,
+                chat_url=chat_url,
+                days_overdue=days_overdue,
+                videos_posted=deliverables.get("actualVideos"),
+                videos_required=deliverables.get("minVideos"),
             )
             email_result = self.email_service.send_followup_if_not_sent(
                 to_email=email,
                 template_data=template,
-                template_type=f"deadline_{reminder_type}",
+                template_type=f"deadline_{rung}",
                 campaign_id=campaign_id,
                 creator_username=username,
+                # A per-chase Reply-To, so a creator who hits reply lands
+                # somewhere the bot can read. None until inbound handling is
+                # switched on, in which case the default reply-to applies and
+                # nothing changes.
+                reply_to=inbound_replies.reply_address_for(campaign_id, username),
             )
+        elif email_note:
+            logger.info(
+                "Deadline email withheld for @%s (%s): %s",
+                username, rung, email_note,
+            )
+
+        if slack_done:
+            return
 
         db = SessionLocal()
         try:
-            existing = (
-                db.query(DeadlineReminder)
-                .filter_by(
-                    campaign_id=campaign_id,
-                    creator_username=username,
-                    reminder_type=reminder_type,
-                )
-                .first()
-            )
-            if existing:
-                return
-
             blocks = build_deadline_reminder_blocks(
                 creator_username=username,
                 campaign_name=creator.get("campaign_name", ""),
                 brand_name=creator.get("brand_name", ""),
                 deadline=deadline_str,
-                reminder_type=reminder_type,
+                reminder_type=rung,
                 days_left=days_left,
-                email_note=(
-                    f"Creator email skipped — {coverage.summary}."
-                    if coverage.covered else None
-                ),
+                email_note=email_note,
+                campaign_id=campaign_id,
+                days_overdue=days_overdue,
+                chat_url=chat_url,
+                emailed=(email_result == EmailSendResult.SENT),
             )
-            text = f"Deadline reminder for @{username}: {reminder_type.replace('_', ' ')}"
+            text = f"Deadline reminder for @{username}: {rung.replace('_', ' ')}"
             self.client.chat_postMessage(
                 channel=Config.SLACK_CHANNEL_DEADLINES,
                 text=text,
@@ -616,8 +742,8 @@ class SchedulerService:
             reminder = DeadlineReminder(
                 campaign_id=campaign_id,
                 creator_username=username,
-                reminder_type=reminder_type,
-                email_sent=(email_result == EmailSendResult.SENT) if email_result else False,
+                reminder_type=rung,
+                email_sent=(email_result == EmailSendResult.SENT),
             )
             db.add(reminder)
             try:
@@ -627,11 +753,10 @@ class SchedulerService:
                 return
 
             logger.info(
-                f"Deadline reminder ({reminder_type}): @{username}, "
-                f"email_result={email_result}"
+                f"Deadline rung ({rung}): @{username}, email_result={email_result}"
             )
         except Exception as e:
-            logger.error(f"Error checking deadline for @{username}: {e}")
+            logger.error(f"Error delivering deadline rung for @{username}: {e}")
         finally:
             db.close()
 
@@ -778,10 +903,13 @@ class SchedulerService:
 
 def _deadline_reminder_type(deadline_str, today: date) -> str | None:
     """
-    Return the current deadline reminder tier ("overdue" / "1_day" / "3_days")
-    for a deadline, or None if outside the reminder window. Mirrors the tier
-    logic in SchedulerService.check_deadline_reminder_for so the baseline seeds
-    exactly the reminder a live check would send.
+    The reminder tier a deadline is currently on, or None outside the window.
+
+    Before the deadline these are the "1_day" / "3_days" tiers. After it, the
+    answer is whichever chase rung the ladder would pick on pure date
+    arithmetic — no clock hold, since a baseline is a snapshot of where the
+    calendar stands rather than a live decision. Mirrors the live path so the
+    baseline seeds exactly the alert a check would have posted.
     """
     if not deadline_str:
         return None
@@ -791,7 +919,11 @@ def _deadline_reminder_type(deadline_str, today: date) -> str | None:
         return None
     days_left = (deadline - today).days
     if days_left < 0:
-        return "overdue"
+        due = [
+            key for key, due_date in chase_ladder.rung_due_dates(deadline)
+            if due_date <= today
+        ]
+        return due[-1] if due else None
     if days_left <= 1:
         return "1_day"
     if days_left <= 3:

@@ -22,6 +22,8 @@ from models.models import ReviewSubmission, SessionLocal
 from services import creator_updates, submission_links
 from services.brand_routing import post_to_brand_workspace
 from templates.slack_blocks import (
+    build_campaign_setup_submitted_blocks,
+    build_product_created_blocks,
     build_review_submitted_blocks,
     build_video_links_submitted_blocks,
 )
@@ -146,8 +148,14 @@ class WebhookHandler:
         event_type = payload.get("event")
 
         # Respect TEST_CAMPAIGN_NAME: drop webhooks for other campaigns.
+        # product_created and campaign_setup_submitted don't carry a campaign
+        # yet (a product isn't tied to a campaign, and a setup is *creating*
+        # one), so exclude them from the filter or every submission is
+        # silently dropped whenever TEST_CAMPAIGN_NAME is set.
         test_campaign_name = Config.TEST_CAMPAIGN_NAME
-        if test_campaign_name:
+        if test_campaign_name and event_type not in (
+            "product_created", "campaign_setup_submitted",
+        ):
             campaign_name = payload.get("campaign", {}).get("name")
             if campaign_name != test_campaign_name:
                 logger.info(
@@ -156,7 +164,11 @@ class WebhookHandler:
                 )
                 return True
 
-        if event_type == "review_submitted":
+        if event_type == "product_created":
+            return self._handle_product_created(payload)
+        elif event_type == "campaign_setup_submitted":
+            return self._handle_campaign_setup_submitted(payload)
+        elif event_type == "review_submitted":
             return self._handle_review_submitted(payload)
         elif event_type == "video_links_submitted":
             return self._handle_video_links_submitted(payload)
@@ -262,6 +274,78 @@ class WebhookHandler:
             return True
         except Exception as exc:
             logger.exception("Failed to archive chat spaces on campaign end: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # New product / new campaign — announced into the admin channels
+    # (#new-products / #new-campaigns) so the internal team sees every
+    # submission from one place. Fires for both brand-side submissions
+    # (from the setup form / brand dashboard) and admin-side ones (from
+    # the admin dashboard's "New campaign" button).
+    # ------------------------------------------------------------------
+    def _handle_product_created(self, payload: dict) -> bool:
+        try:
+            product = payload.get("product") or {}
+            product_name = (product.get("productName") or "").strip() or "(untitled)"
+            brand_name = (payload.get("brandName") or "").strip()
+            blocks = build_product_created_blocks(
+                product=product,
+                brand_name=brand_name,
+                brand_code=payload.get("brandCode") or "",
+                submitted_by_email=payload.get("submittedByEmail") or "",
+            )
+            fallback = (
+                f"New product: {product_name}"
+                + (f" — {brand_name}" if brand_name else "")
+            )
+            ok, _channel, _ts = self._post_to_slack(
+                channel=Config.SLACK_CHANNEL_NEW_PRODUCTS,
+                text=fallback,
+                blocks=blocks,
+                event_label="product_created",
+            )
+            if ok:
+                logger.info(
+                    "Product created notification sent to %s: %s (brand=%s)",
+                    Config.SLACK_CHANNEL_NEW_PRODUCTS, product_name, brand_name or "—",
+                )
+            return ok
+        except Exception as exc:
+            logger.exception("Failed to handle product_created: %s", exc)
+            return False
+
+    def _handle_campaign_setup_submitted(self, payload: dict) -> bool:
+        try:
+            setup = payload.get("setup") or {}
+            campaign_name = (setup.get("campaignName") or "").strip() or "(unnamed)"
+            brand_name = (payload.get("brandName") or setup.get("brandName") or "").strip()
+            blocks = build_campaign_setup_submitted_blocks(
+                setup=setup,
+                submitted_by=payload.get("submittedBy") or "brand",
+                actor=payload.get("actor") or "",
+                brand_name=brand_name,
+                brand_code=payload.get("brandCode") or "",
+                brand_product_name=payload.get("brandProductName") or "",
+            )
+            fallback = (
+                f"New campaign: {campaign_name}"
+                + (f" — {brand_name}" if brand_name else "")
+            )
+            ok, _channel, _ts = self._post_to_slack(
+                channel=Config.SLACK_CHANNEL_NEW_CAMPAIGNS,
+                text=fallback,
+                blocks=blocks,
+                event_label="campaign_setup_submitted",
+            )
+            if ok:
+                logger.info(
+                    "Campaign setup notification sent to %s: %s (brand=%s, via=%s)",
+                    Config.SLACK_CHANNEL_NEW_CAMPAIGNS, campaign_name,
+                    brand_name or "—", payload.get("submittedBy") or "brand",
+                )
+            return ok
+        except Exception as exc:
+            logger.exception("Failed to handle campaign_setup_submitted: %s", exc)
             return False
 
     # ------------------------------------------------------------------

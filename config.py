@@ -60,6 +60,15 @@ class Config:
     SLACK_CHANNEL_DEADLINES = (
         os.environ.get("SLACK_CHANNEL_DEADLINES") or SLACK_CHANNEL_ID or "#creator-deadlines"
     )
+    # Where the admin team hears about a brand submitting a new product or a
+    # new campaign setup form (from the brand dashboard, from the sign-up
+    # flow, or from the admin's own "New campaign" button on the dashboard).
+    SLACK_CHANNEL_NEW_PRODUCTS = (
+        os.environ.get("SLACK_CHANNEL_NEW_PRODUCTS") or SLACK_CHANNEL_ID or "#new-products"
+    )
+    SLACK_CHANNEL_NEW_CAMPAIGNS = (
+        os.environ.get("SLACK_CHANNEL_NEW_CAMPAIGNS") or SLACK_CHANNEL_ID or "#new-campaigns"
+    )
 
     # Optional Slack mention prepended to inbound creator/brand chat pings in
     # SLACK_CHANNEL_REVIEWS. Chat pings thread under the original "content to be

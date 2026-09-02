@@ -872,6 +872,203 @@ def build_video_links_submitted_blocks(
     ]
 
 
+def _fmt_money(value) -> str:
+    """Render a numeric budget/CPM as '$25,000' (or '' when zero/blank)."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if n == int(n):
+        return f"${int(n):,}"
+    return f"${n:,.2f}"
+
+
+def _clip(text: str, limit: int = 700) -> str:
+    """Trim long free-text fields so a Slack section stays under its 3k cap."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def build_product_created_blocks(
+    *,
+    product: dict,
+    brand_name: str = "",
+    brand_code: str = "",
+    submitted_by_email: str = "",
+) -> list[dict]:
+    """
+    Announce a new product a brand just submitted via the Product Details
+    form (either during sign-up or from the brand dashboard). Rendered into
+    the admin team's #new-products channel.
+    """
+    product = product or {}
+    header_bits = [":package: *New product submitted*"]
+    if brand_name:
+        header_bits.append(brand_name + (f" ({brand_code})" if brand_code else ""))
+    header = " — ".join(header_bits)
+
+    fields: list[dict] = []
+
+    def add_field(label: str, value: str) -> None:
+        v = (value or "").strip()
+        if not v:
+            return
+        fields.append({"type": "mrkdwn", "text": f"*{label}:*\n{v}"})
+
+    add_field("Product name", product.get("productName"))
+    add_field("Type", product.get("productType"))
+    pron_diff = (product.get("pronouncedDifferently") or "").strip()
+    if pron_diff.startswith("Yes") and product.get("pronunciation"):
+        add_field("Pronounced", product.get("pronunciation"))
+    add_field("Hype line", product.get("hypeLine"))
+    add_field("Product link", product.get("productLink"))
+    add_field("Screens / flow", product.get("whatItLooksLike"))
+    add_field("Logo / brand assets", product.get("logoAssets"))
+    add_field("Instagram", product.get("instagramLink"))
+    add_field("TikTok", product.get("tiktokLink"))
+    add_field("Twitter / X", product.get("twitterLink"))
+    if submitted_by_email:
+        add_field("Submitted by", submitted_by_email)
+
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": header}},
+    ]
+    # Slack caps a section at 10 fields — chunk if we ever exceed that.
+    for i in range(0, len(fields), 10):
+        blocks.append({"type": "section", "fields": fields[i : i + 10]})
+
+    explanation = _clip(product.get("explanation") or "")
+    if explanation:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*What it does*\n{explanation}"},
+        })
+
+    coupon = _clip(product.get("couponInfo") or "", limit=400)
+    if coupon:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Coupon / offer*\n{coupon}"},
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
+
+
+def build_campaign_setup_submitted_blocks(
+    *,
+    setup: dict,
+    submitted_by: str = "brand",
+    actor: str = "",
+    brand_name: str = "",
+    brand_code: str = "",
+    brand_product_name: str = "",
+) -> list[dict]:
+    """
+    Announce a new campaign setup a brand just submitted (or an admin just
+    created directly from the dashboard). Rendered into the admin team's
+    #new-campaigns channel.
+
+    `submitted_by` is "brand" (via the setup form), "guest" (setup form
+    without a signed-in brand yet), or "admin" (created straight from the
+    admin dashboard). Admin-created campaigns carry only a name + brand
+    name, so the card degrades gracefully to just that.
+    """
+    setup = setup or {}
+
+    header_bits = [":clipboard: *New campaign submitted*"]
+    display_brand = brand_name or setup.get("brandName") or ""
+    if display_brand:
+        header_bits.append(display_brand + (f" ({brand_code})" if brand_code else ""))
+    header = " — ".join(header_bits)
+
+    fields: list[dict] = []
+
+    def add_field(label: str, value: str) -> None:
+        v = (value or "").strip() if isinstance(value, str) else value
+        if not v:
+            return
+        fields.append({"type": "mrkdwn", "text": f"*{label}:*\n{v}"})
+
+    add_field("Campaign name", setup.get("campaignName"))
+    add_field("Product", brand_product_name or setup.get("productName"))
+    add_field("Feature", setup.get("featureName"))
+
+    total_budget = _fmt_money(setup.get("totalBudget"))
+    if total_budget:
+        add_field("Total budget", total_budget)
+
+    cpm_strategy = (setup.get("cpmStrategy") or "").strip()
+    if cpm_strategy == "cap":
+        cap = _fmt_money(setup.get("maxCPM"))
+        add_field("CPM strategy", f"Cap at {cap}" if cap else "Cap")
+    elif cpm_strategy == "lowest":
+        add_field("CPM strategy", "Lowest available")
+    elif cpm_strategy:
+        add_field("CPM strategy", cpm_strategy)
+
+    add_field("Work email", setup.get("workEmail"))
+    form_type = (setup.get("formType") or "").strip()
+    if form_type:
+        add_field("Form", "New brand" if form_type == "new" else "Returning brand")
+
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": header}},
+    ]
+    for i in range(0, len(fields), 10):
+        blocks.append({"type": "section", "fields": fields[i : i + 10]})
+
+    def add_long(label: str, value: str, *, limit: int = 700) -> None:
+        clipped = _clip(value or "", limit=limit)
+        if not clipped:
+            return
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{label}*\n{clipped}"},
+        })
+
+    add_long("Narrative", setup.get("narrative"))
+
+    triggers = setup.get("viralTriggers")
+    if isinstance(triggers, list) and triggers:
+        add_long("Viral triggers", ", ".join(str(t) for t in triggers if t), limit=500)
+
+    add_long("Target audience", setup.get("targetAudience"))
+
+    showcase_link = (setup.get("showcaseLink") or "").strip()
+    showcase_instr = _clip(setup.get("showcaseInstructions") or "", limit=500)
+    if showcase_link or showcase_instr:
+        pieces = []
+        if showcase_link:
+            pieces.append(showcase_link)
+        if showcase_instr:
+            pieces.append(showcase_instr)
+        add_long("Screen / flow to showcase", "\n".join(pieces))
+
+    add_long("Specific influencers", setup.get("specificInfluencers"), limit=500)
+    add_long("Comment reply", setup.get("commentReply"), limit=500)
+    add_long("Caption", setup.get("caption"), limit=500)
+    add_long("Restrictions", setup.get("restrictions"), limit=500)
+
+    footer = None
+    if submitted_by == "admin":
+        footer = f"Created from the admin dashboard{f' by {actor}' if actor else ''}."
+    elif submitted_by == "guest":
+        footer = "Submitted from the public setup form (no signed-in brand yet)."
+    if footer:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": footer}],
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
+
+
 def build_chat_new_message_blocks(
     *,
     creator_username: str,
